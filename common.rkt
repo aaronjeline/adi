@@ -1,5 +1,5 @@
 #lang racket
-(provide exp? label-exp? label?)
+(provide exp? label-exp? label? define/pred)
 (module+ test
   (require rackunit))
 

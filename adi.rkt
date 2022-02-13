@@ -13,6 +13,12 @@
       [(cons x y) b]
       [e (error "Not a pair!:" e)])))
 
+(define (type? t)
+  (match t
+    ['box #t]
+    ['cons #t]
+    [_ #f]))
+
 (define/contract (forall s f)
   (-> set? (-> any/c set?) set?)
   (apply ∪ (set->list (smap f s))))
@@ -46,19 +52,27 @@
       [(list (? symbol? x) v) `((,x ,v))]))
   (env frame ρ))
 
-(define (alloc t s)
+(define/contract (alloc t label s)
+  (-> type? label? store? (cons/c pointer? store?))
   (match s
     [(store next heap)
-     (cons (pointer next t) (store (add1 next) heap))]))
+     (cons (pointer label t) (store next heap))]))
 
 (define/contract (deref p s)
   (-> pointer? store? set?)
   (hash-ref (store-heap s) (pointer-loc p)))
 
 (define (write p v s)
+  (modify-key
+   (λ (s)
+     (set-add s v))
+   p s))
+
+(define (modify-key f p s)
   (modify-heap
    (λ (h)
-     (hash-set h (pointer-loc p) (set v)))
+     (let [(cur (hash-ref h (pointer-loc p) (set)))]
+           (hash-set h (pointer-loc p) (f cur))))
    s))
 
 (define (modify-heap f s)
@@ -98,16 +112,16 @@
 (define-syntax (define/simple stx)
   (syntax-case stx ()
     [(define-simple (o x y) b)
-     (syntax (define/contract (o x y s) (-> value? value? store? response?) (set-map (λ (r) (cons r s)) b)))]
+     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) (set-map (λ (r) (cons r s)) b)))]
     [(define-simple (o x) b)
-     (syntax (define/contract (o x s) (-> value? store? response?) (set-map (λ  (r) (cons r s)) b)))]))
+     (syntax (define/contract (o x l s) (-> value? label? store? response?) (set-map (λ  (r) (cons r s)) b)))]))
 
 (define-syntax (define/op stx)
   (syntax-case stx ()
-    [(define/op (o x y s) b)
-     (syntax (define/contract (o x y s) (-> value? value? store? response?) b))]
-    [(define/op (o x s) b)
-     (syntax (define/contract (o x s) (-> value? store? response?) b))]))
+    [(define/op (o x y l s) b)
+     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) b))]
+    [(define/op (o x l s) b)
+     (syntax (define/contract (o x l s) (-> value? label? store? response?) b))]))
 
 (define/simple (+^ a b)
   (set 'nat))
@@ -132,11 +146,11 @@
 
 
 
-(define/op (eval-box v s)
-  (letpair (ptr s0) (alloc 'box s)
+(define/op (eval-box v l s)
+  (letpair (ptr s0) (alloc 'box l s)
            (set (cons ptr (write ptr v s0)))))
 
-(define/op (eval-set-box! v1 v2 s)
+(define/op (eval-set-box! v1 v2 l s)
   (match v1
     [(? (λ (v) (pointer-kind v 'box)))
      (define s0 (write v1 v2 s))
@@ -149,21 +163,21 @@
       #f))
         
 
-(define/op (eval-unbox v s)
+(define/op (eval-unbox v l s)
   (if (pointer-kind v 'box)
       (forall (deref v s)
               (λ (unboxd)
                 (set (cons unboxd s))))
       (error "Type Error")))
 
-(define/op (eval-cons v1 v2 s)
-  (letpair (ptr s0) (alloc 'cons s)
+(define/op (eval-cons v1 v2 l s)
+  (letpair (ptr s0) (alloc 'cons l s)
            (let [(s1 (write ptr (cons-cell v1 v2) s0))]
              (set (cons ptr s1)))))
 
 
 (define (cons-op o)
-  (λ (v s)
+  (λ (v l s)
     (if (pointer-kind v 'cons)
         (forall (deref v s)
                 (λ (cc)
@@ -182,10 +196,12 @@
              (set (cons cdr s)))))
 ;(trace eval-cdr)
 
-(define (eval-cons? v s)
+(define/contract (eval-cons? v l s)
+  (-> value? label? store? response?)
   (set (cons (pointer-kind v 'cons) s)))
 
-(define (eval-empty? v s)
+(define/contract (eval-empty? v l s)
+  (-> value? label? store? response?)
   (set (cons (eq? v 'empty) s)))
   
 
@@ -207,6 +223,9 @@
 (define (run e)
   (smap car (eval (label-exp e) init-env init-store (set))))
 
+(define (run/dbg e)
+  (eval (label-exp e) init-env init-store (set)))
+         
 
 
 (module+ test
@@ -214,7 +233,7 @@
   ; Recursion tests
 
   ; Recursive store test TODO: Runs forever
-  ;(check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
+  (check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
   
   (check-equal? (run `((rec f (x) (f x)) 1)) (set))
   
@@ -263,7 +282,7 @@
            (begin
              (set-box! p 5)
              (unbox p))))
-   (set 5))
+   (set 3 5))
   (check-equal?
    (run `(car (cdr (cons 1 (cons 2 (cons 3 empty))))))
    (set 2))
@@ -319,8 +338,8 @@
     [(cons 'begin (cons (? label?) es)) (eval-begin es ρ s seen)]
     [(cons `syscall (cons (? label?) (cons name es)))
      (eval-syscall name es ρ s seen)]
-    [(list 'app (? label?) (? list? app))
-     (eval-app app ρ s seen)]))
+    [(list 'app (? label? l) (? list? app))
+     (eval-app app ρ l s seen)]))
 
 
 
@@ -348,10 +367,10 @@
     
 
 
-(define/contract (apply-f f args s seen)
-  (-> any/c list? store? seen? response?)
+(define/contract (apply-f f args l s seen)
+  (-> any/c list? label? store? seen? response?)
   (match f
-    [(? procedure?) (apply f (append args (list s)))]
+    [(? procedure?) (apply f (append args (list l s)))]
     [(closure params body frame)
      (define ρ0 (bind (bind empty-env frame) (zip params args)))
      (eval body ρ0 s seen)]
@@ -361,13 +380,13 @@
     [_ (error "Application of non-function: " f)]))
 
 
-(define/contract (eval-app app ρ s seen)
-  (-> list? env/c store? seen? response?)
+(define/contract (eval-app app ρ l s seen)
+  (-> list? env/c label? store? seen? response?)
   (forall (eval-list-of-exprs app ρ s seen)
           (pλ (vs s0)
               (match vs
                 [(cons fv argsv)
-                 (apply-f fv argsv s0 seen)]
+                 (apply-f fv argsv l s0 seen)]
                 ['() (error "Empty Application")]))))
           
 
