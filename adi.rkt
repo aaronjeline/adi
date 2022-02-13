@@ -1,5 +1,5 @@
 #lang racket
-(require racket/trace threading)
+(require racket/trace threading "common.rkt" "labeller.rkt")
 
 
 (define-syntax-rule (letpair (x y) d b)
@@ -51,13 +51,14 @@
     [(store next heap)
      (cons (pointer next t) (store (add1 next) heap))]))
 
-(define (deref p s)
+(define/contract (deref p s)
+  (-> pointer? store? set?)
   (hash-ref (store-heap s) (pointer-loc p)))
 
 (define (write p v s)
   (modify-heap
    (λ (h)
-     (hash-set h (pointer-loc p) v))
+     (hash-set h (pointer-loc p) (set v)))
    s))
 
 (define (modify-heap f s)
@@ -115,7 +116,7 @@
   (set 'nat))
 
 (define/simple (=^ a b)
-   (if (and (number? a) (number? b))
+  (if (and (number? a) (number? b))
       (set (= a b))
       (set #t #f)))
  
@@ -150,7 +151,9 @@
 
 (define/op (eval-unbox v s)
   (if (pointer-kind v 'box)
-      (set (cons (deref v s) s))
+      (forall (deref v s)
+              (λ (unboxd)
+                (set (cons unboxd s))))
       (error "Type Error")))
 
 (define/op (eval-cons v1 v2 s)
@@ -162,9 +165,12 @@
 (define (cons-op o)
   (λ (v s)
     (if (pointer-kind v 'cons)
-        (match (deref v s)
-          [(cons-cell car cdr)
-           (o car cdr s)])
+        (forall (deref v s)
+                (λ (cc)
+                  (match cc
+                    [(cons-cell car cdr)
+                     (o car cdr s)])))
+       
         (type-error 'cons-op 'cons v))))
       
 (define eval-car
@@ -199,13 +205,16 @@
 (define frame? (listof (list/c symbol? value?)))
 
 (define (run e)
-  (smap car (eval e init-env init-store (set))))
+  (smap car (eval (label-exp e) init-env init-store (set))))
 
 
 
 (module+ test
   (require rackunit)
   ; Recursion tests
+
+  ; Recursive store test TODO: Runs forever
+  ;(check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
   
   (check-equal? (run `((rec f (x) (f x)) 1)) (set))
   
@@ -290,27 +299,27 @@
 
 
 (define/contract (eval e ρ s seen)
-  (-> any/c env/c store? seen? response?)
+  (-> label-exp? env/c store? seen? response?)
   (define this (list e ρ s))
   (if (set-member? seen this)
       (set)
       (eval-step e ρ s (set-add seen this))))
 
-(define/contract (eval-step e ρ s seen)
-  (-> any/c env/c store? seen? response?)
+(define (eval-step e ρ s seen)
+  (-> exp? env/c store? seen? response?)
   (match e
     [(? self-evaluating?) (set (cons e s))]
     [(? variable? x) (set (cons (env-lookup ρ x) s))]
-    [`(if ,e0 ,e1 ,e2) (eval-if e0 e1 e2 ρ s seen)]
-    [`(let (,x ,def) ,body) (eval-let x def body ρ s seen)]
-    [`(λ ,xs ,def) (set (cons (build-closure xs def (set->list (free e)) ρ) s))]
-    [`(rec ,f ,xs ,def)
+    [`(if ,(? label?) ,e0 ,e1 ,e2) (eval-if e0 e1 e2 ρ s seen)]
+    [`(let ,(? label?) (,x ,def) ,body) (eval-let x def body ρ s seen)]
+    [`(λ ,(? label?) ,xs ,def) (set (cons (build-closure xs def (set->list (free e)) ρ) s))]
+    [`(rec ,(? label?) ,f ,xs ,def)
      (set (cons (build-recursive-closure f xs def e ρ) s))]
     
-    [(cons 'begin es) (eval-begin es ρ s seen)]
-    [(cons `syscall (cons name es))
+    [(cons 'begin (cons (? label?) es)) (eval-begin es ρ s seen)]
+    [(cons `syscall (cons (? label?) (cons name es)))
      (eval-syscall name es ρ s seen)]
-    [(? list? app) 
+    [(list 'app (? label?) (? list? app))
      (eval-app app ρ s seen)]))
 
 
@@ -408,33 +417,30 @@
 
 
 
-
-
-
-
-
-   
-
-
-(define (free e)
+(define/contract (free e)
+  (-> label-exp? set?)
   (match e
     ['empty (set)]
     [(? number?) (set)]
     [(? boolean?) (set)]   
     [(? variable?) (set e)]
 
-    [`(if ,e0 ,e1 ,e2)
+    [`(if ,(? label?) ,e0 ,e1 ,e2)
      (apply ∪ (map free (list e0 e1 e2)))]
-    [`(let (,x ,def) ,body)
+    [`(let ,(? label?) (,x ,def) ,body)
      (∪
       (free def)
       (set-subtract (free body) (set x)))]
-    [`(λ ,xs ,def) (set-subtract (free def) (apply set xs))]
-    [`(rec ,f ,xs ,def) (set-subtract (free def) (apply set (cons f xs)))]
-    [(cons 'begin es) (apply ∪ (map free es))]
-    [(cons 'syscall (cons _ args))
+    [`(λ ,(? label?) ,xs ,def) (set-subtract (free def) (apply set xs))]
+    [`(rec ,(? label?) ,f ,xs ,def) (set-subtract (free def) (apply set (cons f xs)))]
+    [(cons 'begin
+           (cons
+            (? label?)
+            es))
+     (apply ∪ (map free es))]
+    [(cons 'syscall (cons (? label?) (cons _ args)))
      (apply ∪ (map free args))]
-    [(? list? app) (apply ∪ (map free app))]))
+    [(list 'app (? label?) (? list? app)) (apply ∪ (map free app))]))
 
 (define (type-error loc t v)
   (error (format "~a: Type Error! Expected: ~a, Got: ~a" loc t (typeof v))))

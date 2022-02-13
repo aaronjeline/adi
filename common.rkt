@@ -1,5 +1,5 @@
 #lang racket
-(provide exp? label-exp?)
+(provide exp? label-exp? label?)
 (module+ test
   (require rackunit))
 
@@ -29,7 +29,11 @@
     label-rec?
     label-begin?
     label-syscall?
-    (cons/c label? (listof label-exp?))) e))
+    (list/c app? label? (listof exp?))) e))
+
+(define (app? e)
+  (equal? e 'app))
+      
 
 (define (empty-symb? s)
   (equal? s 'empty))
@@ -75,7 +79,7 @@
 (define/pred λ? (list 'λ (? (listof symbol?)) (? exp?)))
 (define/pred rec? (list 'rec (? symbol?) (? (listof symbol?)) (? exp?)))
 (define/pred begin? (cons 'begin (? (listof exp?))))
-(define/pred syscall? (cons 'syscall (cons (? symbol?) (? (listof symbol?)))))
+(define/pred syscall? (cons 'syscall (cons (? symbol?) (? (listof exp?)))))
 
 (define/label if?)
 (define/label let?)
