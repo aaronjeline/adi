@@ -2,15 +2,15 @@
 (require racket/trace threading "common.rkt" "labeller.rkt")
 
 
-(define-syntax-rule (letpair (x y) d b)
+(define-syntax-rule (letpair (x y z) d b)
   (match d
-    [(cons x y) b]
+    [(list x y z) b]
     [e (error "Not a pair!: " e)]))
 
-(define-syntax-rule (pλ (x y) b)
+(define-syntax-rule (pλ (x y z) b)
   (λ (p)
     (match p
-      [(cons x y) b]
+      [(list x y z) b]
       [e (error "Not a pair!:" e)])))
 
 (define (type? t)
@@ -53,10 +53,10 @@
   (env frame ρ))
 
 (define/contract (alloc t label s)
-  (-> type? label? store? (cons/c pointer? store?))
+  (-> type? label? store? (list/c pointer? (set/c symbol?) store?))
   (match s
     [(store heap syscalls-map)
-     (cons (pointer label t) (store heap syscalls-map))]))
+     (list (pointer label t) (set) (store heap syscalls-map))]))
 
 (define/contract (deref p s)
   (-> pointer? store? set?)
@@ -107,14 +107,14 @@
     [_ #f]))
 (define value?
   (or/c number? boolean? pointer? symbolic? closure? rec-closure? procedure?))
-(define response? (set/c (cons/c value? store?)))
+(define response? (set/c (list/c value? (set/c symbol?) store?)))
 
 (define-syntax (define/simple stx)
   (syntax-case stx ()
     [(define-simple (o x y) b)
-     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) (set-map (λ (r) (cons r s)) b)))]
+     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) (set-map (λ (r) (list r (set) s)) b)))]
     [(define-simple (o x) b)
-     (syntax (define/contract (o x l s) (-> value? label? store? response?) (set-map (λ  (r) (cons r s)) b)))]))
+     (syntax (define/contract (o x l s) (-> value? label? store? response?) (set-map (λ  (r) (list r (set) s)) b)))]))
 
 (define-syntax (define/op stx)
   (syntax-case stx ()
@@ -147,14 +147,14 @@
 
 
 (define/op (eval-box v l s)
-  (letpair (ptr s0) (alloc 'box l s)
-           (set (cons ptr (write ptr v s0)))))
+  (letpair (ptr syscalls s0) (alloc 'box l s)
+           (set (list ptr (set) (write ptr v s0)))))
 
 (define/op (eval-set-box! v1 v2 l s)
   (match v1
     [(? (λ (v) (pointer-kind v 'box)))
      (define s0 (write v1 v2 s))
-     (set (cons v2 s0))]
+     (set (list v2 (set) s0))]
     [_ (error "Type Error!")]))
 
 (define (pointer-kind p t)
@@ -167,13 +167,13 @@
   (if (pointer-kind v 'box)
       (forall (deref v s)
               (λ (unboxd)
-                (set (cons unboxd s))))
+                (set (list unboxd (set) s))))
       (error "Type Error")))
 
 (define/op (eval-cons v1 v2 l s)
-  (letpair (ptr s0) (alloc 'cons l s)
+  (letpair (ptr syscalls s0) (alloc 'cons l s)
            (let [(s1 (write ptr (cons-cell v1 v2) s0))]
-             (set (cons ptr s1)))))
+             (set (list ptr (set) s1)))))
 
 
 (define (cons-op o)
@@ -189,20 +189,20 @@
       
 (define eval-car
   (cons-op (λ (car cdr s)
-             (set (cons car s)))))
+             (set (list car (set) s)))))
 ;(trace eval-car)
 (define eval-cdr
   (cons-op (λ (car cdr s)
-             (set (cons cdr s)))))
+             (set (list cdr (set) s)))))
 ;(trace eval-cdr)
 
 (define/contract (eval-cons? v l s)
   (-> value? label? store? response?)
-  (set (cons (pointer-kind v 'cons) s)))
+  (set (list (pointer-kind v 'cons) (set) s)))
 
 (define/contract (eval-empty? v l s)
   (-> value? label? store? response?)
-  (set (cons (eq? v 'empty) s)))
+  (set (list (eq? v 'empty) (set) s)))
   
 
 (define empty-env #f)
@@ -259,8 +259,6 @@
    (run `((rec f (x)
             (cons x (f x))) empty))
    (set))
-        
-
    
   (check-equal? (run `(if #f #t #f)) (set #f))
   (check-equal? (run `(let (x 5) x)) (set 5))
@@ -324,16 +322,16 @@
       (set)
       (eval-step e ρ s (set-add seen this))))
 
-(define (eval-step e ρ s seen)
+(define/contract (eval-step e ρ s seen)
   (-> exp? env/c store? seen? response?)
   (match e
-    [(? self-evaluating?) (set (cons e s))]
-    [(? variable? x) (set (cons (env-lookup ρ x) s))]
+    [(? self-evaluating?) (set (list e (set) s))]
+    [(? variable? x) (set (list (env-lookup ρ x) (set) s))]
     [`(if ,(? label?) ,e0 ,e1 ,e2) (eval-if e0 e1 e2 ρ s seen)]
     [`(let ,(? label?) (,x ,def) ,body) (eval-let x def body ρ s seen)]
-    [`(λ ,(? label?) ,xs ,def) (set (cons (build-closure xs def (set->list (free e)) ρ) s))]
+    [`(λ ,(? label?) ,xs ,def) (set (list (build-closure xs def (set->list (free e)) ρ) (set) s))]
     [`(rec ,(? label?) ,f ,xs ,def)
-     (set (cons (build-recursive-closure f xs def e ρ) s))]
+     (set (list (build-recursive-closure f xs def e ρ) (set) s))]
     
     [(cons 'begin (cons (? label?) es)) (eval-begin es ρ s seen)]
     [(cons `syscall (cons (? label?) (cons name es)))
@@ -346,14 +344,14 @@
 (define/contract (eval-if e0 e1 e2 ρ s seen)
   (-> any/c any/c any/c env? store? seen? response?)
   (define guards (eval e0 ρ s seen))
-  (forall guards (pλ (v s0)
+  (forall guards (pλ (v syscalls s0)
                      (eval (if v e1 e2) ρ s0 seen))))
 
 (define/contract (eval-let x def body ρ s seen)
   (-> symbol? any/c any/c env/c store? seen? response?)
   (define definitions (eval def ρ s seen))
   (forall definitions
-          (pλ (v s0)
+          (pλ (v syscalls s0)
               (eval body (bind ρ x v) s0 seen))))
           
 
@@ -361,8 +359,8 @@
 (define (eval-syscall name es ρ s seen)
   (define results (eval-begin es ρ s seen))
   (forall results
-          (pλ (r s0)
-              (set (cons 1 s0) (cons 0 s0)))))
+          (pλ (r syscalls s0)
+              (set (list 1 (set name) s0) (list 0 (set name) s0)))))
   
     
 
@@ -383,7 +381,7 @@
 (define/contract (eval-app app ρ l s seen)
   (-> list? env/c label? store? seen? response?)
   (forall (eval-list-of-exprs app ρ s seen)
-          (pλ (vs s0)
+          (pλ (vs syscalls s0)
               (match vs
                 [(cons fv argsv)
                  (apply-f fv argsv l s0 seen)]
@@ -404,26 +402,26 @@
      (rec-closure f params def frame)]))
 ;(set (cons (build-closure xs def (set->list (free e)) ρ) s)))
 
-(define (eval-begin es ρ s seen)
+(define/contract (eval-begin es ρ s seen)
   (-> list? env/c store? seen? response?)
   (forall
    (eval-list-of-exprs es ρ s seen)
-   (pλ (vs s0)
-       (set (cons (last vs) s0)))))
+   (pλ (vs syscalls s0)
+       (set (list (last vs) (set) s0)))))
           
 
 ;; (list expr) ρ store seen -> (set (list exp))
-(define (eval-list-of-exprs es ρ s seen)
-  (-> list? env/c store? seen? (set/c (cons/c list? store?)))
+(define/contract (eval-list-of-exprs es ρ s seen)
+  (-> list? env/c store? seen? (set/c (list/c list? (set/c symbol?) store?)))
   (match es
-    ['() (set (cons '() s))]
+    ['() (set (list '() (set) s))]
     [(cons e es)
      (define results (eval e ρ s seen))
      (forall results
-             (pλ (v s0)
+             (pλ (v syscalls s0)
                  (forall (eval-list-of-exprs es ρ s0 seen)
-                         (pλ (vs s1)
-                             (set (cons (cons v vs) s1))))))]))
+                         (pλ (vs syscalls s1)
+                             (set (list (cons v vs) (set) s1))))))]))
                         
                          
                          
