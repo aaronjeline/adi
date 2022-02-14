@@ -1,7 +1,11 @@
 #lang racket
-(provide exp? label-exp? label? define/pred)
+(provide exp? variable? label-exp? label? define/pred)
 (module+ test
   (require rackunit))
+
+(define (variable? x)
+  (and (symbol? x)
+       (not (equal? x 'empty))))
 
 (define (exp? e)
   ((or/c

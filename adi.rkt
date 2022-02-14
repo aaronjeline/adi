@@ -30,7 +30,7 @@
       (map f _)
       list->set))
 
-(struct store (next heap) #:transparent)
+(struct store (heap syscalls-map) #:transparent)
 (struct env (frame next) #:transparent)
 (struct pointer (loc type) #:transparent)
 (struct cons-cell (car cdr) #:transparent)
@@ -55,8 +55,8 @@
 (define/contract (alloc t label s)
   (-> type? label? store? (cons/c pointer? store?))
   (match s
-    [(store next heap)
-     (cons (pointer label t) (store next heap))]))
+    [(store heap syscalls-map)
+     (cons (pointer label t) (store heap syscalls-map))]))
 
 (define/contract (deref p s)
   (-> pointer? store? set?)
@@ -77,10 +77,10 @@
 
 (define (modify-heap f s)
   (match s
-    [(store next heap)
-     (store next (f heap))]))
+    [(store heap syscalls-map)
+     (store (f heap) syscalls-map)]))
 
-(define init-store (store 0 (hash)))
+(define init-store (store (hash) (hash)))
 
 
 (define (set-map f s)
@@ -232,7 +232,7 @@
   (require rackunit)
   ; Recursion tests
 
-  ; Recursive store test TODO: Runs forever
+  ; Recursive store test 
   (check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
   
   (check-equal? (run `((rec f (x) (f x)) 1)) (set))

@@ -2,6 +2,8 @@
 (require "common.rkt")
 (provide (contract-out (label-exp (-> exp? label-exp?))))
 
+
+
 #;
 (define (exp? e)
   ((or/c
@@ -46,7 +48,22 @@
     [(? list? es)
      (list 'app (new-label) (for/list [(e es)]
                               (label-exp e)))]))
-      
+
+(define (get-label e)
+  (match e
+    [(? number?) #f]
+    [(? boolean?) #f]
+    [(? variable?) #f]
+    ['empty #f]
+    [`(if (label ,l) ,_ ,_ ,_) l]
+    [`(let (label ,l) ,_ ,_) l]
+    [`(λ (label ,l) ,_ ,_) l]
+    [`(rec (label ,l) ,_ ,_ ,_) l]
+    [(cons 'begin (cons `(label ,l) _)) l]
+    [(cons 'syscall (cons `(label ,l) _)) l]
+    [`(app (label ,l) ,_) l]))
+
+
    
 
   
