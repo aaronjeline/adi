@@ -7,11 +7,13 @@
     [(list x y z) b]
     [e (error "Not a pair!: " e)]))
 
-(define-syntax-rule (pλ (x y z) b)
+(define-syntax-rule (pλ (x y z) b ...)
   (λ (p)
     (match p
-      [(list x y z) b]
+      [(list x y z) (begin b ...)]
       [e (error "Not a pair!:" e)])))
+
+
 
 (define (type? t)
   (match t
@@ -30,7 +32,7 @@
       (map f _)
       list->set))
 
-(struct store (heap syscalls-map) #:transparent)
+(struct store (heap) #:transparent)
 (struct env (frame next) #:transparent)
 (struct pointer (loc type) #:transparent)
 (struct cons-cell (car cdr) #:transparent)
@@ -55,8 +57,8 @@
 (define/contract (alloc t label s)
   (-> type? label? store? (list/c pointer? (set/c symbol?) store?))
   (match s
-    [(store heap syscalls-map)
-     (list (pointer label t) (set) (store heap syscalls-map))]))
+    [(store heap)
+     (list (pointer label t) (set) (store heap))]))
 
 (define/contract (deref p s)
   (-> pointer? store? set?)
@@ -72,15 +74,15 @@
   (modify-heap
    (λ (h)
      (let [(cur (hash-ref h (pointer-loc p) (set)))]
-           (hash-set h (pointer-loc p) (f cur))))
+       (hash-set h (pointer-loc p) (f cur))))
    s))
 
 (define (modify-heap f s)
   (match s
-    [(store heap syscalls-map)
-     (store (f heap) syscalls-map)]))
+    [(store heap)
+     (store (f heap))]))
 
-(define init-store (store (hash) (hash)))
+(define init-store (store (hash)))
 
 
 (define (set-map f s)
@@ -220,16 +222,77 @@
 
 (define frame? (listof (list/c symbol? value?)))
 
-(define (run e)
-  (smap car (eval (label-exp e) init-env init-store (set))))
+(define syscall-map (make-hash))
+(define (clear-syscall-map!)
+  (set! syscall-map (make-hash)))
+(define/contract (add-syscalls! l new-calls)
+  (-> symbol? (set/c symbol?) void?)
+  (define cur (hash-ref syscall-map l (set)))
+  (hash-set! syscall-map l (∪ cur new-calls))
+  (void))
+(define (query-syscalls e)
+  (hash-ref syscall-map (get-label e) (set)))
+
+(define (run e (needs-labelling #t))
+  (clear-syscall-map!)
+  (define e_ (if needs-labelling (label-exp e) e))
+  (smap car (eval e_ init-env init-store (set) (set))))
 
 (define (run/dbg e)
   (eval (label-exp e) init-env init-store (set)))
-         
+
+(define/contract (run-and-get-mapping e)
+  (-> label-exp? hash?)
+  (run e #f)
+  syscall-map)
+
 
 
 (module+ test
   (require rackunit)
+  (require (for-syntax rackunit racket/set))
+  (define-syntax (check-mapping stx)
+    (syntax-case stx ()
+      [(_ e kvs)
+       #`(let [(mapping (run-and-get-mapping (quote e)))]
+           (for [(kv (quote kvs))]
+             (check-equal?
+              (hash-ref mapping (car kv))
+              (apply set (cdr kv)))))]))
+    
+          
+
+
+  (check-mapping (syscall (label a) write (prim (label c) 1) (prim (label b) 2)) ((a . (write))))
+
+  (check-mapping (let (label a)
+                   (x (syscall (label b) write (prim (label c) 1) (prim (label d) 2)))
+                   (var (label e) x))
+                 ((a . (write)) (e . ())))
+
+  
+  (check-mapping
+   (begin (label a)
+          (syscall (label b) write (prim (label c) 1))
+          (prim (label d) 2))
+   ((b . (write)) (c . ()) (d . (write))))
+          
+
+  #;
+  (check-mapping (app (label a) ((var (label z) +) (prim (label x) 1)
+                                                   (syscall (label b) write
+                                                            (prim (label y) 1)
+                                                            (prim (label w) 2))))
+                 ((a . (write))
+                  (z . ())
+                  (b . (write))))
+  #;(check-mapping
+     (syscall (label a)
+              write
+              (syscall (label b) read 1 2)
+              2)
+     a (write read))
+  
   ; Recursion tests
 
   ; Recursive store test 
@@ -309,82 +372,93 @@
 
 
 
+(define syscall-set? (set/c symbol?))
 
 
 
 
 
-
-(define/contract (eval e ρ s seen)
-  (-> label-exp? env/c store? seen? response?)
+(define/contract (eval e ρ s current-syscalls seen)
+  (-> label-exp? env/c store? syscall-set? seen? response?)
   (define this (list e ρ s))
   (if (set-member? seen this)
       (set)
-      (eval-step e ρ s (set-add seen this))))
+      (eval-step e ρ s current-syscalls (set-add seen this))))
 
-(define/contract (eval-step e ρ s seen)
-  (-> exp? env/c store? seen? response?)
+(define/contract (eval-step e ρ s current-syscalls seen)
+  (-> exp? env/c store? syscall-set? seen? response?)
+  (add-syscalls! (get-label e) current-syscalls)
   (match e
-    [(? self-evaluating?) (set (list e (set) s))]
-    [(? variable? x) (set (list (env-lookup ρ x) (set) s))]
-    [`(if ,(? label?) ,e0 ,e1 ,e2) (eval-if e0 e1 e2 ρ s seen)]
-    [`(let ,(? label?) (,x ,def) ,body) (eval-let x def body ρ s seen)]
+    [(? label-prim?) (set (list (get-prim e) (set) s))]
+    [(? label-variable? x) (set (list (env-lookup ρ (get-variable x)) (set) s))]
+    [`(if (label ,l) ,e0 ,e1 ,e2) (eval-if l e0 e1 e2 ρ s current-syscalls seen)]
+    [`(let (label ,l) (,x ,def) ,body) (eval-let l x def body ρ s current-syscalls seen)]
     [`(λ ,(? label?) ,xs ,def) (set (list (build-closure xs def (set->list (free e)) ρ) (set) s))]
     [`(rec ,(? label?) ,f ,xs ,def)
      (set (list (build-recursive-closure f xs def e ρ) (set) s))]
     
-    [(cons 'begin (cons (? label?) es)) (eval-begin es ρ s seen)]
-    [(cons `syscall (cons (? label?) (cons name es)))
-     (eval-syscall name es ρ s seen)]
+    [(cons 'begin (cons `(label ,l) es)) (eval-begin l es ρ s current-syscalls seen)]
+    [(cons `syscall (cons `(label ,l) (cons name es)))
+     (eval-syscall l name es ρ s current-syscalls seen)]
     [(list 'app (? label? l) (? list? app))
-     (eval-app app ρ l s seen)]))
+     (eval-app app ρ l s current-syscalls seen)]))
 
+  
 
-
-(define/contract (eval-if e0 e1 e2 ρ s seen)
-  (-> any/c any/c any/c env? store? seen? response?)
-  (define guards (eval e0 ρ s seen))
+(define/contract (eval-if l e0 e1 e2 ρ s cur-syscalls seen)
+  (-> symbol? label-exp? label-exp? label-exp? env? store? syscall-set? seen? response?)
+  (define guards (eval e0 ρ s cur-syscalls seen))
   (forall guards (pλ (v syscalls s0)
-                     (eval (if v e1 e2) ρ s0 seen))))
+                     (define r (eval (if v e1 e2) ρ s0 (set) seen))
+                     (add-syscalls! l (∪ (query-syscalls e0) (query-syscalls e1) (query-syscalls e2)))
+                     r)))
+                     
 
-(define/contract (eval-let x def body ρ s seen)
-  (-> symbol? any/c any/c env/c store? seen? response?)
-  (define definitions (eval def ρ s seen))
+(define/contract (eval-let l x def body ρ s cur-syscalls seen)
+  (-> symbol? symbol? any/c any/c env/c store? syscall-set? seen? response?)
+  (define definitions (eval def ρ s cur-syscalls seen))
   (forall definitions
-          (pλ (v syscalls s0)
-              (eval body (bind ρ x v) s0 seen))))
+          (pλ (v syscalls_from_def s0)
+              (define r
+                (eval body (bind ρ x v) s0 (set) seen))
+              (add-syscalls! l (∪ (query-syscalls def) (query-syscalls body)))
+              r)))
           
 
           
-(define (eval-syscall name es ρ s seen)
-  (define results (eval-begin es ρ s seen))
+(define/contract (eval-syscall label name es ρ s cur-syscalls seen)
+  (-> symbol? symbol? (listof label-exp?) env/c store? syscall-set? seen? response?)
+  (define results (eval-begin label es ρ s cur-syscalls seen))
   (forall results
           (pλ (r syscalls s0)
-              (set (list 1 (set name) s0) (list 0 (set name) s0)))))
+              (define all-syscalls (∪ syscalls (set name)))
+              (add-syscalls! label all-syscalls)
+              (set (list 1 all-syscalls s0) (list 0 all-syscalls s0)))))
   
     
 
 
-(define/contract (apply-f f args l s seen)
-  (-> any/c list? label? store? seen? response?)
+(define/contract (apply-f f args l s cur-syscalls seen)
+  (-> any/c list? label? store? syscall-set? seen? response?)
   (match f
     [(? procedure?) (apply f (append args (list l s)))]
     [(closure params body frame)
      (define ρ0 (bind (bind empty-env frame) (zip params args)))
-     (eval body ρ0 s seen)]
+     (eval body ρ0 s cur-syscalls seen)]
     [(rec-closure fname params body frame)
      (define p0 (bind (bind empty-env frame) (zip (cons fname params) (cons f args))))
-     (eval body p0 s seen)]
+     (eval body p0 s cur-syscalls seen)]
     [_ (error "Application of non-function: " f)]))
 
 
-(define/contract (eval-app app ρ l s seen)
-  (-> list? env/c label? store? seen? response?)
-  (forall (eval-list-of-exprs app ρ s seen)
+(define/contract (eval-app app ρ l s cur-syscalls seen)
+  (-> list? env/c label? store? syscall-set? seen? response?)
+  (forall (eval-list-of-exprs (label->symbol l) app ρ s cur-syscalls seen)
           (pλ (vs syscalls s0)
               (match vs
                 [(cons fv argsv)
-                 (apply-f fv argsv l s0 seen)]
+                 (add-syscalls! (label->symbol l) syscalls)
+                 (apply-f fv argsv l s0 syscalls seen)]
                 ['() (error "Empty Application")]))))
           
 
@@ -402,46 +476,34 @@
      (rec-closure f params def frame)]))
 ;(set (cons (build-closure xs def (set->list (free e)) ρ) s)))
 
-(define/contract (eval-begin es ρ s seen)
-  (-> list? env/c store? seen? response?)
+(define/contract (eval-begin l es ρ s cur-syscalls seen)
+  (-> symbol? list? env/c store? syscall-set? seen? response?)
   (forall
-   (eval-list-of-exprs es ρ s seen)
+   (eval-list-of-exprs l es ρ s cur-syscalls seen)
    (pλ (vs syscalls s0)
-       (set (list (last vs) (set) s0)))))
+       (add-syscalls! l syscalls)
+       (set (list (last vs) syscalls s0)))))
           
 
 ;; (list expr) ρ store seen -> (set (list exp))
-(define/contract (eval-list-of-exprs es ρ s seen)
-  (-> list? env/c store? seen? (set/c (list/c list? (set/c symbol?) store?)))
+(define/contract (eval-list-of-exprs l es ρ s cur-syscalls seen)
+  (-> symbol? list? env/c store? syscall-set? seen? (set/c (list/c list? (set/c symbol?) store?)))
   (match es
     ['() (set (list '() (set) s))]
     [(cons e es)
-     (define results (eval e ρ s seen))
+     (define results (eval e ρ s cur-syscalls seen))
      (forall results
              (pλ (v syscalls s0)
-                 (forall (eval-list-of-exprs es ρ s0 seen)
+                 (forall (eval-list-of-exprs l es ρ s0 syscalls seen)
                          (pλ (vs syscalls s1)
-                             (set (list (cons v vs) (set) s1))))))]))
-                        
-                         
-                         
-
-(define op1s (make-hash))
-(define op2s (make-hash))
-
-(define-for-syntax (format-symbol f selector stx)
-  (string->symbol (format f (selector (syntax->datum stx)))))
-
+                             (set (list (cons v vs) syscalls s1))))))]))
 
 
 (define/contract (free e)
   (-> label-exp? set?)
   (match e
-    ['empty (set)]
-    [(? number?) (set)]
-    [(? boolean?) (set)]   
-    [(? variable?) (set e)]
-
+    [(? label-prim?) (set)]
+    [(? label-variable?) (set (get-variable e))]
     [`(if ,(? label?) ,e0 ,e1 ,e2)
      (apply ∪ (map free (list e0 e1 e2)))]
     [`(let ,(? label?) (,x ,def) ,body)

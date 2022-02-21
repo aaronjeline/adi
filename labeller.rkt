@@ -1,6 +1,7 @@
 #lang racket
 (require "common.rkt")
-(provide (contract-out (label-exp (-> exp? label-exp?))))
+(provide (contract-out (label-exp (-> exp? label-exp?)))
+         get-prim get-variable get-label label->symbol)
 
 
 
@@ -24,10 +25,8 @@
 
 (define (label-exp e)
   (match e
-    [(? integer?) e]
-    [(? boolean?) e]
-    [(? symbol?) e]
-    ['empty 'empty]
+    [(? prim?) (make-label-prim e)]
+    [(? variable?) (make-label-variable e)]
     [(list 'if e0 e1 e2) (list 'if (new-label) (label-exp e0) (label-exp e1) (label-exp e2))]
     [`(let (,x ,def) ,body) `(let ,(new-label) (,x ,(label-exp def)) ,(label-exp body))]
     [`(λ ,xs ,def) `(λ ,(new-label) ,xs ,(label-exp def))]
@@ -49,12 +48,28 @@
      (list 'app (new-label) (for/list [(e es)]
                               (label-exp e)))]))
 
+(define/contract (make-label-prim e)
+  (-> prim? label-prim?)
+  `(prim ,(new-label) ,e))
+
+(define/contract (get-prim e)
+  (-> label-prim? (or/c boolean? number? symbol?))
+  (match e
+    [`(prim ,_ ,p) p]))
+
+(define/contract (make-label-variable x)
+  (-> variable? label-variable?)
+  `(var ,(new-label) ,x))
+
+(define (get-variable lx)
+  (-> label-variable? variable?)
+  (match lx
+    [`(var ,_ ,x) x]))
+
 (define (get-label e)
   (match e
-    [(? number?) #f]
-    [(? boolean?) #f]
-    [(? variable?) #f]
-    ['empty #f]
+    [`(prim (label ,l) ,_) l]
+    [`(var (label ,l) ,_) l]
     [`(if (label ,l) ,_ ,_ ,_) l]
     [`(let (label ,l) ,_ ,_) l]
     [`(λ (label ,l) ,_ ,_) l]
@@ -64,6 +79,9 @@
     [`(app (label ,l) ,_) l]))
 
 
+(define (label->symbol l)
+  (match l
+    [`(label ,x) x]))
    
 
   
