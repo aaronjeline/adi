@@ -230,6 +230,7 @@
   (define cur (hash-ref syscall-map l (set)))
   (hash-set! syscall-map l (∪ cur new-calls))
   (void))
+
 (define (query-syscalls e)
   (hash-ref syscall-map (get-label e) (set)))
 
@@ -257,25 +258,33 @@
        #`(let [(mapping (run-and-get-mapping (quote e)))]
            (for [(kv (quote kvs))]
              (check-equal?
-              (hash-ref mapping (car kv))
-              (apply set (cdr kv)))))]))
+              (hash-ref mapping (car kv) (set))
+              (apply set (cdr kv))
+              (symbol->string (car kv)))))]))
     
           
 
 
-  (check-mapping (syscall (label a) write (prim (label c) 1) (prim (label b) 2)) ((a . (write))))
+  (check-mapping (syscall (label a) write (prim (label c) 1) (prim (label b) 2)) ((a . (write))
+                                                                                  (c . (write))
+                                                                                  (b . (write))))
 
   (check-mapping (let (label a)
                    (x (syscall (label b) write (prim (label c) 1) (prim (label d) 2)))
                    (var (label e) x))
-                 ((a . (write)) (e . ())))
+                 ((a . (write))
+                  (b . (write))
+                  (c . (write))
+                  (d . (write))
+                  (e . ())))
+
 
   
   (check-mapping
    (begin (label a)
           (syscall (label b) write (prim (label c) 1))
           (prim (label d) 2))
-   ((b . (write)) (c . ()) (d . (write))))
+   ((b . (write)) (c . (write)) (d . ())))
           
 
   #;
@@ -283,15 +292,16 @@
                                                    (syscall (label b) write
                                                             (prim (label y) 1)
                                                             (prim (label w) 2))))
-                 ((a . (write))
-                  (z . ())
-                  (b . (write))))
-  #;(check-mapping
+                 
+  )
+                     
+  (check-mapping
      (syscall (label a)
               write
-              (syscall (label b) read 1 2)
-              2)
-     a (write read))
+              (syscall (label b) read (prim (label b) 1) (prim (label c) 2))
+              (prim (label d) 2))
+     ((a . (write))
+      (b . (write read))))
   
   ; Recursion tests
 
@@ -387,7 +397,7 @@
 
 (define/contract (eval-step e ρ s current-syscalls seen)
   (-> exp? env/c store? syscall-set? seen? response?)
-  (add-syscalls! (get-label e) current-syscalls)
+  ;(add-syscalls! (get-label e) current-syscalls)
   (match e
     [(? label-prim?) (set (list (get-prim e) (set) s))]
     [(? label-variable? x) (set (list (env-lookup ρ (get-variable x)) (set) s))]
@@ -433,6 +443,8 @@
           (pλ (r syscalls s0)
               (define all-syscalls (∪ syscalls (set name)))
               (add-syscalls! label all-syscalls)
+              (for [(label (map get-label es))]
+                (add-syscalls! label all-syscalls))
               (set (list 1 all-syscalls s0) (list 0 all-syscalls s0)))))
   
     
@@ -496,6 +508,7 @@
              (pλ (v syscalls s0)
                  (forall (eval-list-of-exprs l es ρ s0 syscalls seen)
                          (pλ (vs syscalls s1)
+                             (add-syscalls! (get-label e) syscalls)
                              (set (list (cons v vs) syscalls s1))))))]))
 
 
