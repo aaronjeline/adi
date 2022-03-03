@@ -1,5 +1,5 @@
 #lang racket
-(provide exp? variable? label-exp? label? define/pred prim? label-prim? label-variable?)
+(provide list-ref/set exp? variable? label-exp? label? define/pred prim? label-prim? label-variable?)
 (module+ test
   (require rackunit))
 
@@ -117,6 +117,27 @@
   (check-false (if? `(if (+ 1 2) 2)))
   (check-true (λ? `(λ (x y z) (+ 1 2))))
   (check-false (λ? `(λ (x 1) 2))))
+
+
+
+(define/contract (list-ref/set lst i)
+  (-> (listof set?) exact-nonnegative-integer? set?)
+  (with-handlers
+      [(exn:fail:contract?
+        (λ (e) (set)))]
+    (list-ref lst i)))
+(module+ test
+  (check-equal? (list-ref/set (list (set 1 2 3) (set 4 5 6)) 0) (set 1 2 3))
+  (check-equal? (list-ref/set (list (set 1 2 3) (set 4 5 6)) 1) (set 4 5 6))
+  (check-equal? (list-ref/set (list (set 1 2 3) (set 4 5 6)) 2) (set)))
+  
+
+
+
+
+
+
+
 
 
 

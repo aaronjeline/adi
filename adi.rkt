@@ -231,7 +231,8 @@
   (hash-set! syscall-map l (∪ cur new-calls))
   (void))
 
-(define (query-syscalls e)
+(define/contract (query-syscalls e)
+  (-> label-exp? set?)
   (hash-ref syscall-map (get-label e) (set)))
 
 (define (run e (needs-labelling #t))
@@ -284,24 +285,29 @@
    (begin (label a)
           (syscall (label b) write (prim (label c) 1))
           (prim (label d) 2))
-   ((b . (write)) (c . (write)) (d . ())))
+   ((a . (write)) (b . (write)) (c . (write)) (d . ())))
           
 
-  #;
+  
   (check-mapping (app (label a) ((var (label z) +) (prim (label x) 1)
                                                    (syscall (label b) write
                                                             (prim (label y) 1)
                                                             (prim (label w) 2))))
                  
-  )
-                     
+                 ((a . (write))
+                  (z . (write))
+                  (x . (write))
+                  (b . (write))
+                  (y . (write))
+                  (w . (write))))
+       
   (check-mapping
-     (syscall (label a)
-              write
-              (syscall (label b) read (prim (label b) 1) (prim (label c) 2))
-              (prim (label d) 2))
-     ((a . (write))
-      (b . (write read))))
+   (syscall (label a)
+            write
+            (syscall (label b) read (prim (label b) 1) (prim (label c) 2))
+            (prim (label d) 2))
+   ((a . (write read))
+    (b . (write read))))
   
   ; Recursion tests
 
@@ -499,18 +505,41 @@
 
 ;; (list expr) ρ store seen -> (set (list exp))
 (define/contract (eval-list-of-exprs l es ρ s cur-syscalls seen)
-  (-> symbol? list? env/c store? syscall-set? seen? (set/c (list/c list? (set/c symbol?) store?)))
-  (match es
-    ['() (set (list '() (set) s))]
-    [(cons e es)
-     (define results (eval e ρ s cur-syscalls seen))
-     (forall results
-             (pλ (v syscalls s0)
-                 (forall (eval-list-of-exprs l es ρ s0 syscalls seen)
-                         (pλ (vs syscalls s1)
-                             (add-syscalls! (get-label e) syscalls)
-                             (set (list (cons v vs) syscalls s1))))))]))
+  (-> symbol? (listof label-exp?) env/c store? syscall-set? seen? (set/c (list/c list? (set/c symbol?) store?)))
+  (define evaluation-result
+    (match es
+      ['() (set (list '() (set) s))]
+      [(cons e es)
+       (define results (eval e ρ s cur-syscalls seen))
+       (forall results
+               (pλ (v syscalls s0)
+                   (forall (eval-list-of-exprs l es ρ s0 syscalls seen)
+                           (pλ (vs syscalls s1)
+                               (add-syscalls! (get-label e) syscalls)
+                               (set (list (cons v vs) syscalls s1))))))]))
+  (define syscalls (map query-syscalls es))
+  (update-syscalls-in-list es syscalls)
+  (when (not (empty? es))
+    (add-syscalls! l (query-syscalls (first es))))
+  evaluation-result)
 
+
+;; Iterate over a list in reverse with idices
+(define-syntax-rule (for/reverse/enumerate i [(x xs)] body)
+  (for
+      [(i (reverse (range (length xs))))
+       (x (reverse xs))]
+    body))
+          
+
+
+(define/contract (update-syscalls-in-list es syscalls)
+  (-> (listof exp?) (listof set?) void?)
+  (for/reverse/enumerate i
+    [(e es)]
+    (begin
+      (define l (get-label e))
+      (add-syscalls! l (list-ref/set syscalls (add1 i))))))
 
 (define/contract (free e)
   (-> label-exp? set?)
