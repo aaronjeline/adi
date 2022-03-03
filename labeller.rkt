@@ -1,9 +1,10 @@
 #lang racket
-(require "common.rkt")
+(require "common.rkt" racket/trace)
 (provide (contract-out (label-exp (-> exp? label-exp?)))
          get-prim get-variable get-label label->symbol)
 
-
+(module+ test
+  (require rackunit))
 
 #;
 (define (exp? e)
@@ -77,6 +78,10 @@
     [(cons 'begin (cons `(label ,l) _)) l]
     [(cons 'syscall (cons `(label ,l) _)) l]
     [`(app (label ,l) ,_) l]))
+
+
+(module+ test
+  (check-equal? (get-label '(prim (label b) 2)) 'b))
 
 
 (define (label->symbol l)
