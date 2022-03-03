@@ -264,7 +264,7 @@
               (symbol->string (car kv)))))]))
     
           
-
+  
 
   (check-mapping (syscall (label a) write (prim (label c) 1) (prim (label b) 2)) ((a . (write))
                                                                                   (c . (write))
@@ -279,6 +279,26 @@
                   (d . (write))
                   (e . ())))
 
+  (check-mapping
+   (app (label z)
+        ((λ (label a) (x) (syscall (label b) write (var (label c) x)))
+         (prim (label d) 1)))
+   ((z . (write))
+    (d . (write))
+    (b . (write))
+    (c . (write))))
+  
+  #;
+  (check-mapping
+   (app (label j)
+        ((rec (label a) f (x) (if (label b) (app (label c)
+                                                 ((var (label d) =)
+                                                  (prim (label e) 1)
+                                                  (syscall (label f) write (var (label g) x))))
+                                  (prim (label h) 2)
+                                  (app (label k) ((var (label l) f) (prim (label m) 1)))))
+         (prim (label n) 1)))
+   ((m . (write))))
 
   
   (check-mapping
@@ -315,6 +335,10 @@
   (check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
   
   (check-equal? (run `((rec f (x) (f x)) 1)) (set))
+  (check-equal?
+   (run `((rec f (x) (if (= 1 (syscall write x 2))
+                         2
+                         (f 1))) 1)) (set 2))
   
   (check-equal?
    (run `((rec f (x) (f (add1 x))) 1)) (set))
