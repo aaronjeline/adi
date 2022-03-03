@@ -278,7 +278,7 @@
                   (c . (write))
                   (d . (write))
                   (e . ())))
-
+#;
   (check-mapping
    (app (label z)
         ((λ (label a) (x) (syscall (label b) write (var (label c) x)))
