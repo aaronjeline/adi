@@ -2,6 +2,10 @@
 (require racket/trace threading "common.rkt" "labeller.rkt")
 
 
+;;lang e ::= (e + e) | (e * e) | (e = e) | (e - e) |
+;;(add1 e) | (sub1 e) | (box e) | (unbox e) | (set-box! e) | (cons e e) | (empty? e) | (car e) | (cdr e)
+
+
 (define-syntax-rule (letpair (x y z) d b)
   (match d
     [(list x y z) b]
@@ -32,12 +36,14 @@
       (map f _)
       list->set))
 
-(struct store (heap) #:transparent)
+(struct store (heap) #:transparent) ;;heap is a hash
 (struct env (frame next) #:transparent)
 (struct pointer (loc type) #:transparent)
 (struct cons-cell (car cdr) #:transparent)
 (struct closure (params body frame) #:transparent)
 (struct rec-closure (name params body frame) #:transparent)
+
+
 
 (define (env-lookup ρ x)
   (if ρ
@@ -46,6 +52,9 @@
         [#f (env-lookup (env-next ρ) x)])
       (error "Unknown Variable: " x)))
 
+
+;;given a list of names and values zips them together into a new enviornment
+;;also ρ? It is 
 (define (bind ρ . args)
   (define frame
     (match args
@@ -54,37 +63,40 @@
       [(list (? symbol? x) v) `((,x ,v))]))
   (env frame ρ))
 
+;;What is the set for?
 (define/contract (alloc t label s)
   (-> type? label? store? (list/c pointer? (set/c symbol?) store?))
-  (match s
-    [(store heap)
-     (list (pointer label t) (set) (store heap))]))
+  (list (pointer label t) (set) (store (store-heap s))))
 
+;;returns a hashset mapping heap to pointer location
 (define/contract (deref p s)
   (-> pointer? store? set?)
   (hash-ref (store-heap s) (pointer-loc p)))
 
+;;
 (define (write p v s)
   (modify-key
    (λ (s)
      (set-add s v))
    p s))
 
+;;
 (define (modify-key f p s)
   (modify-heap
    (λ (h)
-     (let [(cur (hash-ref h (pointer-loc p) (set)))]
+     (let [(cur (hash-ref h (pointer-loc p) (set)))] ;;(set)?
        (hash-set h (pointer-loc p) (f cur))))
    s))
 
-(define (modify-heap f s)
-  (match s
-    [(store heap)
-     (store (f heap))]))
 
-(define init-store (store (hash)))
+;;enlarges the heap by applying f to store
+(define/contract (modify-heap f s)
+  (-> procedure? store? store?)
+  (store (f (store-heap s))))
 
+(define init-store (store (hash))) ;;move up
 
+;;what is this doing?
 (define (set-map f s)
   (~> s
       set->list
