@@ -1,10 +1,21 @@
 #lang racket
 (require racket/trace threading "common.rkt" "labeller.rkt")
 
+;;An abstract interpreter to determine system calls made in the program
+;; and at what point they are no longer needed
+;; Ultimately a way to do automatic sandboxing (with some limitations)
 
-;;lang e ::= (e + e) | (e * e) | (e = e) | (e - e) |
+
+;;Language
+
+
+;;Expr
+;;e ::= (+ e e) | (* e e) | (= e e) | (- e e) | (syscall l)
 ;;(add1 e) | (sub1 e) | (box e) | (unbox e) | (set-box! e) | (cons e e) | (empty? e) | (car e) | (cdr e)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Syntax
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define-syntax-rule (letpair (x y z) d b)
   (match d
@@ -18,23 +29,35 @@
       [e (error "Not a pair!:" e)])))
 
 
+(define-syntax (define/simple stx)
+  (syntax-case stx ()
+    [(define-simple (o x y) b)
+     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) (set-map (λ (r) (list r (set) s)) b)))]
+    [(define-simple (o x) b)
+     (syntax (define/contract (o x l s) (-> value? label? store? response?) (set-map (λ  (r) (list r (set) s)) b)))]))
 
-(define (type? t)
-  (match t
-    ['box #t]
-    ['cons #t]
-    [_ #f]))
+(define-syntax (define/op stx)
+  (syntax-case stx ()
+    [(define/op (o x y l s) b)
+     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) b))]
+    [(define/op (o x l s) b)
+     (syntax (define/contract (o x l s) (-> value? label? store? response?) b))]))
 
-(define/contract (forall s f)
-  (-> set? (-> any/c set?) set?)
-  (apply ∪ (set->list (smap f s))))
 
-(define/contract (smap f s)
-  (-> procedure? set? set?)
-  (~> s
-      set->list
-      (map f _)
-      list->set))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Definitions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Store is a (store Heap)
+;; Heap is a hash of ??
+;; Env is a (frame ??
+;; Ptr is a (loc ??
+;; Cons-cell is a ??
+;; Closure is a ??
+;; Rec-closure is a ??
+;; State is a (list Exp Env State)
+
 
 (struct store (heap) #:transparent) ;;heap is a hash
 (struct env (frame next) #:transparent)
@@ -45,27 +68,162 @@
 
 
 
-(define (env-lookup ρ x)
-  (if ρ
-      (match (assoc x (env-frame ρ))
-        [(list _ r) r]
-        [#f (env-lookup (env-next ρ) x)])
-      (error "Unknown Variable: " x)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Main function
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-;;given a list of names and values zips them together into a new enviornment
-;;also ρ? It is 
-(define (bind ρ . args)
-  (define frame
-    (match args
-      [(list (? list? f)) f]
-      [(list (? list? names) (? list? vals)) (zip names vals)]
-      [(list (? symbol? x) v) `((,x ,v))]))
-  (env frame ρ))
+;; Expr -> set (State)
+;;takes an expression and returns the possible sets of states it can reach
+(define (run e (needs-labelling #t))
+  (clear-syscall-map!)
+  (define e_ (if needs-labelling (label-exp e) e))
+  (smap car (eval e_ init-env init-store (set) (set))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Evaluation
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;given an expresion, an enviornment, a store, a set of syscalls and a seen set
+;; calculates the set of reachable states
+(define/contract (eval e ρ s current-syscalls seen)
+  (-> label-exp? env/c store? syscall-set? seen? response?)
+  (define this (list e ρ s))
+  (if (set-member? seen this)
+      (set)
+      (eval-step e ρ s current-syscalls (set-add seen this))))
+
+(define/op (eval-box v l s)
+  (letpair (ptr syscalls s0) (alloc 'box l s)
+           (set (list ptr (set) (write ptr v s0)))))
+
+(define/op (eval-set-box! v1 v2 l s)
+  (match v1
+    [(? (λ (v) (pointer-kind v 'box)))
+     (define s0 (write v1 v2 s))
+     (set (list v2 (set) s0))]
+    [_ (error "Type Error!")]))
+(define/op (eval-unbox v l s)
+  (if (pointer-kind v 'box)
+      (forall (deref v s)
+              (λ (unboxd)
+                (set (list unboxd (set) s))))
+      (error "Type Error")))
+
+(define/op (eval-cons v1 v2 l s)
+  (letpair (ptr syscalls s0) (alloc 'cons l s)
+           (let [(s1 (write ptr (cons-cell v1 v2) s0))]
+             (set (list ptr (set) s1)))))
+(define eval-car
+  (cons-op (λ (car cdr s)
+             (set (list car (set) s)))))
+;(trace eval-car)
+(define eval-cdr
+  (cons-op (λ (car cdr s)
+             (set (list cdr (set) s)))))
+;(trace eval-cdr)
+
+(define/contract (eval-cons? v l s)
+  (-> value? label? store? response?)
+  (set (list (pointer-kind v 'cons) (set) s)))
+
+(define/contract (eval-empty? v l s)
+  (-> value? label? store? response?)
+  (set (list (eq? v 'empty) (set) s)))
+  
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Constants
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;global hash
+;;maps system calls to program labels ??
+(define syscall-map (make-hash))
+
+;; resets the global hashmap
+(define (clear-syscall-map!)
+  (set! syscall-map (make-hash)))
+
+;; an empty enviornment
+(define empty-env #f)
+
+;;enviornment with all 
+(define init-env (bind empty-env `((+ ,+^) (* ,*^) (= ,=^) (- ,-^) (add1 ,add1^) (sub1 ,sub1^)
+                                           (box ,eval-box) (unbox ,eval-unbox)
+                                           (set-box! ,eval-set-box!)
+                                           (cons ,eval-cons)
+                                           (empty? ,eval-empty?)
+                                           (car ,eval-car) (cdr ,eval-cdr))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Determiners? idk name
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;determines if a type requires allocated memory
+(define (alloc-type? t)
+  (match t
+    ['box #t]
+    ['cons #t]
+    [_ #f]))
+
+;; a symbolic value is either nat or empty
+;; unsure what's going on here since empty is not symbolic
+(define (symbolic? v)
+  (match v
+    ['nat #t]
+    ['empty #t]
+    [_ #f]))
+
+;; checks if the given enviornment is a proper list of frames
+(define (env/c e)
+  (match e
+    [#f #t]
+    [(env frame rest)
+     (and (frame? frame)
+          (env/c rest))]))
+
+(define state/c (list/c any/c env/c store?))
+
+;;why is this necessary?
+(define seen? (set/c state/c))
+
+
+(define value?
+  (or/c number? boolean? pointer? symbolic? closure? rec-closure? procedure?))
+
+(define response? (set/c (list/c value? (set/c symbol?) store?)))
+
+(define syscall-set? (set/c symbol?))
+
+
+
+
+
+(define/contract (add-syscalls! l new-calls)
+  (-> symbol? (set/c symbol?) void?)
+  (define cur (hash-ref syscall-map l (set)))
+  (hash-set! syscall-map l (∪ cur new-calls))
+  (void))
+
+
+
+
+
+
+
+
+
+
+
+
 
 ;;What is the set for?
 (define/contract (alloc t label s)
-  (-> type? label? store? (list/c pointer? (set/c symbol?) store?))
+  (-> alloc-type? label? store? (list/c pointer? (set/c symbol?) store?))
   (list (pointer label t) (set) (store (store-heap s))))
 
 ;;returns a hashset mapping heap to pointer location
@@ -104,38 +262,9 @@
       list->set))
 
 
-;; state : (list exp env state)
-(define (env/c e)
-  (match e
-    [#f #t]
-    [(env frame rest)
-     (and (frame? frame)
-          (env/c rest))]))
-(define state/c (list/c any/c env/c store?))
-(define seen? (set/c state/c))
 
-(define (symbolic? v)
-  (match v
-    ['nat #t]
-    ['empty #t]
-    [_ #f]))
-(define value?
-  (or/c number? boolean? pointer? symbolic? closure? rec-closure? procedure?))
-(define response? (set/c (list/c value? (set/c symbol?) store?)))
 
-(define-syntax (define/simple stx)
-  (syntax-case stx ()
-    [(define-simple (o x y) b)
-     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) (set-map (λ (r) (list r (set) s)) b)))]
-    [(define-simple (o x) b)
-     (syntax (define/contract (o x l s) (-> value? label? store? response?) (set-map (λ  (r) (list r (set) s)) b)))]))
 
-(define-syntax (define/op stx)
-  (syntax-case stx ()
-    [(define/op (o x y l s) b)
-     (syntax (define/contract (o x y l s) (-> value? value? label? store? response?) b))]
-    [(define/op (o x l s) b)
-     (syntax (define/contract (o x l s) (-> value? label? store? response?) b))]))
 
 (define/simple (+^ a b)
   (set 'nat))
@@ -160,16 +289,7 @@
 
 
 
-(define/op (eval-box v l s)
-  (letpair (ptr syscalls s0) (alloc 'box l s)
-           (set (list ptr (set) (write ptr v s0)))))
 
-(define/op (eval-set-box! v1 v2 l s)
-  (match v1
-    [(? (λ (v) (pointer-kind v 'box)))
-     (define s0 (write v1 v2 s))
-     (set (list v2 (set) s0))]
-    [_ (error "Type Error!")]))
 
 (define (pointer-kind p t)
   (if (pointer? p)
@@ -177,17 +297,7 @@
       #f))
         
 
-(define/op (eval-unbox v l s)
-  (if (pointer-kind v 'box)
-      (forall (deref v s)
-              (λ (unboxd)
-                (set (list unboxd (set) s))))
-      (error "Type Error")))
 
-(define/op (eval-cons v1 v2 l s)
-  (letpair (ptr syscalls s0) (alloc 'cons l s)
-           (let [(s1 (write ptr (cons-cell v1 v2) s0))]
-             (set (list ptr (set) s1)))))
 
 
 (define (cons-op o)
@@ -201,31 +311,8 @@
        
         (type-error 'cons-op 'cons v))))
       
-(define eval-car
-  (cons-op (λ (car cdr s)
-             (set (list car (set) s)))))
-;(trace eval-car)
-(define eval-cdr
-  (cons-op (λ (car cdr s)
-             (set (list cdr (set) s)))))
-;(trace eval-cdr)
 
-(define/contract (eval-cons? v l s)
-  (-> value? label? store? response?)
-  (set (list (pointer-kind v 'cons) (set) s)))
 
-(define/contract (eval-empty? v l s)
-  (-> value? label? store? response?)
-  (set (list (eq? v 'empty) (set) s)))
-  
-
-(define empty-env #f)
-(define init-env (bind empty-env `((+ ,+^) (* ,*^) (= ,=^) (- ,-^) (add1 ,add1^) (sub1 ,sub1^)
-                                           (box ,eval-box) (unbox ,eval-unbox)
-                                           (set-box! ,eval-set-box!)
-                                           (cons ,eval-cons)
-                                           (empty? ,eval-empty?)
-                                           (car ,eval-car) (cdr ,eval-cdr))))
 
 
 
@@ -234,23 +321,11 @@
 
 (define frame? (listof (list/c symbol? value?)))
 
-(define syscall-map (make-hash))
-(define (clear-syscall-map!)
-  (set! syscall-map (make-hash)))
-(define/contract (add-syscalls! l new-calls)
-  (-> symbol? (set/c symbol?) void?)
-  (define cur (hash-ref syscall-map l (set)))
-  (hash-set! syscall-map l (∪ cur new-calls))
-  (void))
+
 
 (define/contract (query-syscalls e)
   (-> label-exp? set?)
   (hash-ref syscall-map (get-label e) (set)))
-
-(define (run e (needs-labelling #t))
-  (clear-syscall-map!)
-  (define e_ (if needs-labelling (label-exp e) e))
-  (smap car (eval e_ init-env init-store (set) (set))))
 
 (define (run/dbg e)
   (eval (label-exp e) init-env init-store (set)))
@@ -424,18 +499,12 @@
 
 
 
-(define syscall-set? (set/c symbol?))
 
 
 
 
 
-(define/contract (eval e ρ s current-syscalls seen)
-  (-> label-exp? env/c store? syscall-set? seen? response?)
-  (define this (list e ρ s))
-  (if (set-member? seen this)
-      (set)
-      (eval-step e ρ s current-syscalls (set-add seen this))))
+
 
 (define/contract (eval-step e ρ s current-syscalls seen)
   (-> exp? env/c store? syscall-set? seen? response?)
@@ -610,10 +679,6 @@
     [(pointer _ t) (format "pointer to ~a" t)]
     [_ (error "Invalid Value!")]))
 
-(define (member? lst)
-  (λ (x)
-    (hash-has-key? lst x)))
-
 
 
 
@@ -622,10 +687,59 @@
 
 (define variable? symbol?)
 
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Helpers
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;; maps f over a set. Preserves uniquness
+(define/contract (smap f s)
+  (-> procedure? set? set?)
+  (~> s
+      set->list
+      (map f _)
+      list->set))
+
+;;set union for arbitrary sets
 (define (∪ . xs)
   (if (empty? xs)
       (set)
       (apply set-union xs)))
+
+;; returns a function that returns true if a value is in a hash
+(define (member? lst)
+  (λ (x)
+    (hash-has-key? lst x)))
+
+
+;;given a list of names and values zips them together into a new enviornment
+;;also ρ? It is 
+(define (bind ρ . args)
+  (define frame
+    (match args
+      [(list (? list? f)) f]
+      [(list (? list? names) (? list? vals)) (zip names vals)]
+      [(list (? symbol? x) v) `((,x ,v))]))
+  (env frame ρ))
+
+
+;;looks up a variable in the given environment
+(define (env-lookup ρ x)
+  (if ρ
+      (match (assoc x (env-frame ρ))
+        [(list _ r) r]
+        [#f (env-lookup (env-next ρ) x)])
+      (error "Unknown Variable: " x)))
+
+;;maps a function f over a set, seems same as smap
+(define/contract (forall s f)
+  (-> set? (-> any/c set?) set?)
+  (apply ∪ (set->list (smap f s))))
+
+
 
 (define (zip a b)
   (map list a b))
