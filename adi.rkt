@@ -1,6 +1,6 @@
 #lang racket
-(require threading "common.rkt" "labeller.rkt")
-
+(require threading racket/trace "common.rkt" "labeller.rkt" "graph.rkt")
+(provide (all-defined-out))
 
 (define-syntax-rule (letpair (x y z) d b)
   (match d
@@ -38,6 +38,14 @@
 (struct cons-cell (car cdr) #:transparent)
 (struct closure (params body frame) #:transparent)
 (struct rec-closure (name params body frame) #:transparent)
+(struct procedure-call-context
+  (call-label
+   last-label
+   context-graph
+   seen)
+  #:transparent)
+
+  
 
 (define (env-lookup ρ x)
   (if ρ
@@ -109,8 +117,7 @@
     [_ #f]))
 (define value?
   (or/c number? boolean? pointer? symbolic? closure? rec-closure? procedure?))
-(define (graph? g)
-  (hash? g))
+
 
 ;; A response is a set of evaluation results,
 ;; Each evaluation result is a
@@ -124,21 +131,42 @@
 (define-syntax (define/simple stx)
   (syntax-case stx ()
     [(define-simple (o x y) b)
-     (syntax (define/contract (o x y l context s)
-               (-> value? value? symbol? graph? store? response?)
-               (set-map (λ (r) (list r l context s)) b)))]
+     (syntax (define/contract (o xs ctxt)
+               (-> (listof value?) procedure-call-context? response?)
+               (match xs
+                 [(list x y)
+                  (match ctxt
+                    [(procedure-call-context _ l context s)
+                     (set-map (λ (r) (list r l context s)) b)])])))]
+              
     [(define-simple (o x) b)
-     (syntax (define/contract (o x l context s)
-               (-> value? symbol? graph? store? response?)
-               (set-map (λ  (r) (list r l context s)) b)))]))
+     (syntax (define/contract (o xs ctxt)
+               (-> (listof value?) procedure-call-context? response?)
+               (match xs
+                 [(list x)
+                  (match ctxt
+                    [(procedure-call-context _ l context s)
+                     (set-map (λ (r) (list r l context s)) b)])])))]))
+              
 
 (define-syntax (define/op stx)
   (syntax-case stx ()
-    [(define/op (o x y l context s) b)
-     (syntax (define/contract (o x y l context s)
-               (-> value? value? symbol? graph? store? response?) b))]
-    [(define/op (o x l context s) b)
-     (syntax (define/contract (o x l context s) (-> value? symbol? graph? store? response?) b))]))
+    [(define/op (o cur-l x y l context s) b)
+     (syntax (define/contract (o xs ctxt)
+               (-> (listof value?) procedure-call-context? response?)
+               (match xs
+                 [(list x y)
+                  (match ctxt
+                    [(procedure-call-context cur-l l context s)
+                     b])])))]
+    [(define/op (o cur-l x l context s) b)
+     (syntax (define/contract (o xs ctxt)
+               (-> (listof value?) procedure-call-context? response?)
+               (match xs
+                 [(list x)
+                  (match ctxt
+                    [(procedure-call-context cur-l l context s)
+                     b])])))]))
 
 (define/simple (+^ a b)
   (set 'nat))
@@ -163,11 +191,11 @@
 
 
 
-(define/op (eval-box v l context s)
-  (letpair (ptr syscalls s0) (alloc 'box l s)
+(define/op (eval-box cur-l v l context s)
+  (letpair (ptr syscalls s0) (alloc 'box cur-l s)
            (set (list ptr l context (write ptr v s0)))))
 
-(define/op (eval-set-box! v1 v2 l context s)
+(define/op (eval-set-box! cur-l v1 v2 l context s)
   (match v1
     [(? (λ (v) (pointer-kind v 'box)))
      (define s0 (write v1 v2 s))
@@ -180,46 +208,58 @@
       #f))
         
 
-(define/op (eval-unbox v l context s)
+(define/op (eval-unbox cur-l v l context s)
   (if (pointer-kind v 'box)
       (forall (deref v s)
               (λ (unboxd)
                 (set (list unboxd l context s))))
       (error "Type Error")))
 
-(define/op (eval-cons v1 v2 l context s)
-  (letpair (ptr syscalls s0) (alloc 'cons l s)
+(define/op (eval-cons cur-l v1 v2 l context s)
+  (letpair (ptr syscalls s0) (alloc 'cons cur-l s)
            (let [(s1 (write ptr (cons-cell v1 v2) s0))]
              (set (list ptr l context s1)))))
 
 
+
 (define (cons-op o)
-  (λ (v l context s)
-    (if (pointer-kind v 'cons)
-        (forall (deref v s)
-                (λ (cc)
-                  (match cc
-                    [(cons-cell car cdr)
-                     (o l context car cdr s)])))
-       
-        (type-error 'cons-op 'cons v))))
+  (λ (vs ctxt)
+    (match vs
+      [(list v)
+       (match ctxt
+         [(procedure-call-context _ l context s)
+          (if (pointer-kind v 'cons)
+              (forall (deref v s)
+                      (λ (cc)
+                        (match cc
+                          [(cons-cell car cdr)
+                           (o l context car cdr s)])))
+              (type-error 'cons-op 'cons v))])])))
       
 (define eval-car
   (cons-op (λ (l context car cdr s)
              (set (list car l context s)))))
-;(trace eval-car)
+
 (define eval-cdr
   (cons-op (λ (l context car cdr s)
              (set (list cdr l context s)))))
-;(trace eval-cdr)
 
-(define/contract (eval-cons? v l context s)
-  (-> value? symbol? graph? store? response?)
-  (set (list (pointer-kind v 'cons) l context s)))
 
-(define/contract (eval-empty? v l context s)
-  (-> value? symbol? graph? store? response?)
-  (set (list (eq? v 'empty) l context s)))
+(define/contract (eval-cons? vs ctxt)
+  (-> (listof value?) procedure-call-context? response?)
+  (match vs
+    [(list v)
+     (match ctxt
+       [(procedure-call-context _ l context s)  
+        (set (list (pointer-kind v 'cons) l context s))])]))
+
+(define/contract (eval-empty? vs ctxt)
+  (-> (listof value?) procedure-call-context? response?)
+  (match vs
+    [(list v)
+     (match ctxt
+       [(procedure-call-context _ l context s)  
+        (set (list (eq? v 'empty) l context s))])]))
   
 
 (define empty-env #f)
@@ -232,21 +272,19 @@
 
 
 
-;; A Graph (A) is a (hash A -> (set A))
-;; A Call-Context is a Graph Labels
-(define (new-graph) (hash))
-;; Add an edge to the graph
-(define (add-edge g s d)
-  (define cur-adjs (hash-ref g s (set)))
-  (hash-set g s (set-add cur-adjs d)))
+
 
 
 
 (define frame? (listof (list/c symbol? value?)))
 
+;; Map from program labels to sets of syscalls
 (define syscall-map (make-hash))
+;; Reset the syscall map
 (define (clear-syscall-map!)
   (set! syscall-map (make-hash)))
+
+;; Add a syscall into the syscall map and a particular label
 (define/contract (add-syscalls! l new-calls)
   (-> symbol? (set/c symbol?) void?)
   (define cur (hash-ref syscall-map l (set)))
@@ -257,10 +295,25 @@
   (-> label-exp? set?)
   (hash-ref syscall-map (get-label e) (set)))
 
-(define (run e (needs-labelling #t))
+(define (run/core e (needs-labelling #t))
   (clear-syscall-map!)
   (define e_ (if needs-labelling (label-exp e) e))
-  (smap car (eval e_ init-env init-store (new-graph) (set))))
+  (eval e_ init-env init-store (new-graph) (set)))
+
+(define (run e (needs-labelling #t))
+  (smap car (run/core e needs-labelling)))
+
+;; TODO dlete
+(define example
+  `(app (label j)
+      ((rec (label a) foo (x) (if (label b) (app (label c)
+                                               ((var (label d) =)
+                                                (prim (label e) 1)
+                                                (syscall (label f) write (var (label g) x))))
+                                (prim (label h) 2)
+                                (app (label k) ((var (label l) foo) (prim (label m) 1)))))
+       (prim (label n) 1))))
+
 
 (define (run/dbg e)
   (eval (label-exp e) init-env init-store (set)))
@@ -269,170 +322,6 @@
   (-> label-exp? hash?)
   (run e #f)
   syscall-map)
-
-
-
-(module+ test
-  (require rackunit)
-  (require (for-syntax rackunit racket/set))
-  (define-syntax (check-mapping stx)
-    (syntax-case stx ()
-      [(_ e kvs)
-       #`(let [(mapping (run-and-get-mapping (quote e)))]
-           (for [(kv (quote kvs))]
-             (void)
-             #;(check-equal?
-              (hash-ref mapping (car kv) (set))
-              (apply set (cdr kv))
-              (symbol->string (car kv)))))]))
-    
-          
-  
-
-  (check-mapping (syscall (label a) write (prim (label c) 1) (prim (label b) 2)) ((a . (write))
-                                                                                  (c . (write))
-                                                                                  (b . (write))))
-
-  (check-mapping (let (label a)
-                   (x (syscall (label b) write (prim (label c) 1) (prim (label d) 2)))
-                   (var (label e) x))
-                 ((a . (write))
-                  (b . (write))
-                  (c . (write))
-                  (d . (write))
-                  (e . ())))
-  #;
-  (check-mapping
-   (app (label z)
-        ((λ (label a) (x) (syscall (label b) write (var (label c) x)))
-         (prim (label d) 1)))
-   ((z . (write))
-    (d . (write))
-    (b . (write))
-    (c . (write))))
-  
-  #;
-  (check-mapping
-   (app (label j)
-        ((rec (label a) f (x) (if (label b) (app (label c)
-                                                 ((var (label d) =)
-                                                  (prim (label e) 1)
-                                                  (syscall (label f) write (var (label g) x))))
-                                  (prim (label h) 2)
-                                  (app (label k) ((var (label l) f) (prim (label m) 1)))))
-         (prim (label n) 1)))
-   ((m . (write))))
-
-  
-  (check-mapping
-   (begin (label a)
-          (syscall (label b) write (prim (label c) 1))
-          (prim (label d) 2))
-   ((a . (write)) (b . (write)) (c . (write)) (d . ())))
-          
-
-  
-  (check-mapping (app (label a) ((var (label z) +) (prim (label x) 1)
-                                                   (syscall (label b) write
-                                                            (prim (label y) 1)
-                                                            (prim (label w) 2))))
-                 
-                 ((a . (write))
-                  (z . (write))
-                  (x . (write))
-                  (b . (write))
-                  (y . (write))
-                  (w . (write))))
-       
-  (check-mapping
-   (syscall (label a)
-            write
-            (syscall (label b) read (prim (label b) 1) (prim (label c) 2))
-            (prim (label d) 2))
-   ((a . (write read))
-    (b . (write read))))
-  
-  ; Recursion tests
-
-  ; Recursive store test 
-  (check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
-  
-  (check-equal? (run `((rec f (x) (f x)) 1)) (set))
-  (check-equal?
-   (run `((rec f (x) (if (= 1 (syscall write x 2))
-                         2
-                         (f 1))) 1)) (set 2))
-  
-  (check-equal?
-   (run `((rec f (x) (f (add1 x))) 1)) (set))
-
-  
-  (check-equal? (run `((rec f (x)
-                         (if (= x 0)
-                             #t
-                             (f (- x 1))))
-                       2))
-                (set #t))
-
-  (check-equal?
-   (run `((rec f (x)
-            (if (= (add1 x) (add1 5))
-                2
-                (f x))) 1))
-   (set 2))
-
-  (check-equal?
-   (run `((rec f (x)
-            (cons x (f x))) empty))
-   (set))
-   
-  (check-equal? (run `(if #f #t #f)) (set #f))
-  (check-equal? (run `(let (x 5) x)) (set 5))
-  (check-equal? (run `((λ (x) (+ x 1)) 5)) (set 'nat))
-  (check-equal? (run `(if (= 1 (add1 1)) 1 0)) (set 1 0))
-  
-  (check-equal?
-   (run
-    `(let (fact (rec fact (x)
-                  (if (= x 0)
-                      1
-                      (* x (fact (sub1 x))))))
-       (fact 5)))
-   (set 'nat))
-  (check-equal? (run `(let (add1 (let (x 1) (λ (y) (+ y x))))
-                        (add1 2))) (set 'nat))
-  (check-equal?
-   (run `(let (p (box 3))
-           (begin
-             (set-box! p 5)
-             (unbox p))))
-   (set 3 5))
-  (check-equal?
-   (run `(car (cdr (cons 1 (cons 2 (cons 3 empty))))))
-   (set 2))
-  (check-equal?
-   (run `(let (length (rec length (x)
-                        (if (empty? x)
-                            0
-                            (+ 1 (length (cdr x))))))
-           (length (cons 1 (cons 2 (cons 3 empty))))))
-   (set 'nat))
-  (check-equal?
-   (run `(let (foldr (rec foldr (f b xs)
-                       (if (empty? xs)
-                           b
-                           (f (car xs) (foldr f b (cdr xs))))))
-           (let (sum (λ (xs) (foldr + 0 xs)))
-             (let (map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs)))
-               (sum (map (λ (x) (+ x 1)) (cons 1 (cons 2 (cons 3 empty)))))))))
-   (set 'nat))
-  (check-equal?
-   (run `(syscall write 1))
-   (set 0 1)))
-
-
-
-
 
 
 (define syscall-set? (set/c symbol?))
@@ -444,6 +333,7 @@
 (define/contract (eval e ρ s context seen)
   (-> label-exp? env/c store? graph? seen? response?)
   (define this (list e ρ s))
+ ; (printf "Seen: ~a\n" seen)
   (if (set-member? seen this)
       (set)
       (eval-step e ρ s context (set-add seen this))))
@@ -489,22 +379,24 @@
              
           
 
-;; TODO actually mark visited syscalls 
+
 (define/contract (eval-syscall label name es ρ s context seen)
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
   (define results (eval-begin label es ρ s (add-edge context label (get-label (first es))) seen))
   (forall results
           (pλ (r last-label context′ s0)
+              (for [(node (get-backwards-slice context′ last-label))]
+                (add-syscalls! node (set name)))
               (set (list 1 last-label context′ s0)
                    (list 0 last-label context′ s0)))))
   
     
 
-
-(define/contract (apply-f f args l s context seen)
-  (-> any/c list? symbol? store? graph? seen? response?)
+(define/contract (apply-f cur-l f args l s context seen)
+  (-> symbol? any/c list? symbol? store? graph? seen? response?)
   (match f
-    [(? procedure?) (apply f (append args (list l context s)))] ;; TODO understand this
+    [(? procedure?)
+     (f args (procedure-call-context cur-l l context s))]
     [(closure params body frame)
      (define ρ0 (bind (bind empty-env frame) (zip params args)))
      (eval body ρ0 s (add-edge context l (get-label body)) seen)]
@@ -521,9 +413,9 @@
           (pλ (vs last-label context′ s0)
               (match vs
                 [(cons fv argsv)
-                 (apply-f fv argsv last-label s0 context′ seen)]
+                 (apply-f (label->symbol l) fv argsv last-label s0 context′ seen)]
                 ['() (error "Empty Application")]))))
-          
+         
 
 
 
@@ -611,6 +503,7 @@
     [(pointer _ t) (format "pointer to ~a" t)]
     [_ (error "Invalid Value!")]))
 
+
 (define (member? lst)
   (λ (x)
     (hash-has-key? lst x)))
@@ -630,5 +523,6 @@
 
 (define (zip a b)
   (map list a b))
+
 
 
