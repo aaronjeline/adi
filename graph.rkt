@@ -1,5 +1,6 @@
 #lang racket
-(provide get-backwards-slice display-graph new-graph add-edge (struct-out graph))
+(provide get-backwards-slice display-graph new-graph add-edge (struct-out graph)
+         merge-graphs*)
 ;; Right now we are storing both fowrads & backwards edges
 ;; Forward edges can probably be removed.
 
@@ -7,8 +8,59 @@
 ;; A Call-Context is a Graph Labels
 (struct graph (forward-edges backward-edges))
 (define (new-graph)
-  (reset-memo!)
   (graph (hash) (hash)))
+
+
+
+(define (hash-set-add! h k v)
+  (hash-update! h k (λ (s) (set-add s v)) (set)))
+(define (hash-set-union! h k v)
+  (hash-update! h k (λ (s) (set-union s v)) (set)))
+
+(define (merge-graphs g1 g2)
+  (match (cons g1 g2)
+    [(cons (graph forward1 backward1)
+           (graph forward2 backward2))
+     (graph (merge forward1 forward2)
+            (merge backward1 backward2))]))
+
+(define (merge-graphs* . gs)
+  (foldr (λ (g′ g) (merge-graphs g′ g)) (new-graph) gs))
+
+(define (merge h1 h2)
+  (define h (make-hash))
+  (add-all-to-hash! h h1)
+  (add-all-to-hash! h h2)
+  h)
+
+(define (add-all-to-hash! h h′)
+  (for [(entry (hash->list h′))]
+    (match entry
+      [(cons k v)
+       (hash-set-union! h k v)])))
+  
+     
+
+  
+#;(module+ test
+  (define g1 (add-edges (new-graph)
+                        `((a b)
+                          (b c))))
+  (define g2 (add-edges (new-graph)
+                        `((e b)
+                          (a b))))
+  (check-equal?
+   
+    (merge-graphs g1 g2)
+   (add-edges
+    (new-graph)
+    `((a b)
+      (e b)
+      (b c)))))
+   
+                           
+                           
+
 
 ;; Add an edge to the graph
 (define (add-edge g src dst)
@@ -46,8 +98,6 @@
    (set 'a 'c 'd)))
 
 (define backwards-slice-memo (make-hash))
-(define (reset-memo!)
-  (set! backwards-slice-memo (make-hash)))
 
 ;; Find all nodes reachable moving backwards across edges
 ;; ie:
@@ -57,7 +107,6 @@
 
 (define (get-backwards-slice/seen g n seen)
   (cond
-    [(in-memo? n) (get-from-memo n)]
     [(has-seen? n seen) (set n)]
     [else
      (let*
@@ -65,7 +114,6 @@
           (now-seen (set-add seen n))
           (backwards-slices (map (λ (n) (get-backwards-slice/seen g n now-seen)) can-directly-reach))
           (answer (set-add (apply ∪ backwards-slices) n))]
-       (add-to-memo! n answer)
        answer)]))
 
 (define (add-to-memo! n answer)
@@ -98,7 +146,33 @@
                                    '((a b)
                                      (b a)))
                         'a)
-   (set 'a 'b)))
+   (set 'a 'b))
+  (check-equal?
+   (get-backwards-slice (add-edges (new-graph)
+                                   '((a b)
+                                     (b c)
+                                     (c a))) 'c)
+   (set 'a 'b 'c))
+  (define looping-example
+    (add-edges
+     (new-graph)
+     `((j a)
+       (a n)
+       (n b)
+       (b c)
+       (c d)
+       (d e)
+       (e f)
+       (f g)
+       (g h)
+       (g k)
+       (k l)
+       (l m)
+       (m b))))
+  (check-equal?
+   (get-backwards-slice looping-example 'm)
+   (apply set '(m l k g f e d c b n a j))))
+               
 
 ;; TODO use env variables to make this more portable
 (define DOT_LOCATION "/opt/homebrew/bin/dot")
@@ -110,19 +184,18 @@
   (define-values (sp out in err)
     (subprocess png-port #f #f DOT_LOCATION "-Tpng"))
   (displayln dotsrc in)
-  ;(close-input-port out)
-
- 
   (close-output-port in)
   (define errstring (port->string err))
   (close-input-port err)
   (close-output-port png-port)
   (subprocess-wait sp)
   (define status (subprocess-status sp))
-  (printf "Subprocess status code: ~a" status)
   (unless (zero? status)
-    (printf "Stderr says:\n~a" errstring))
-  (system (format "open ~a" png)))
+    (begin
+      (printf "Subprocess status code: ~a" status)
+      (printf "Stderr says:\n~a" errstring)))
+  (system (format "open ~a" png))
+  (void))
   
   
 

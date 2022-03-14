@@ -1,5 +1,5 @@
 #lang racket
-(require threading racket/trace "common.rkt" "labeller.rkt" "graph.rkt")
+(require threading "common.rkt" "labeller.rkt" "graph.rkt")
 (provide (all-defined-out))
 
 (define-syntax-rule (letpair (x y z) d b)
@@ -23,7 +23,13 @@
 
 (define/contract (forall s f)
   (-> set? (-> any/c set?) set?)
-  (apply ∪ (set->list (smap f s))))
+  (apply ∪ (set->list (smap (check-real-then f) s))))
+
+(define (check-real-then f)
+  (λ (v)
+    (match v
+      [(cons '⊥ rst) (set (cons '⊥ rst))]
+      [_ (f v)])))
 
 (define/contract (smap f s)
   (-> procedure? set? set?)
@@ -113,6 +119,7 @@
 (define (symbolic? v)
   (match v
     ['nat #t]
+    ['⊥ #t]
     ['empty #t]
     [_ #f]))
 (define value?
@@ -300,10 +307,13 @@
   (define e_ (if needs-labelling (label-exp e) e))
   (eval e_ init-env init-store (new-graph) (set)))
 
+(define (run/view-graph e (needs-labelling #t))
+  (display-graph (apply merge-graphs* (set->list (smap third (run/core e needs-labelling))))))
+
 (define (run e (needs-labelling #t))
   (smap car (run/core e needs-labelling)))
 
-;; TODO dlete
+;; TODO delete
 (define example
   `(app (label j)
       ((rec (label a) foo (x) (if (label b) (app (label c)
@@ -333,9 +343,8 @@
 (define/contract (eval e ρ s context seen)
   (-> label-exp? env/c store? graph? seen? response?)
   (define this (list e ρ s))
- ; (printf "Seen: ~a\n" seen)
   (if (set-member? seen this)
-      (set)
+      (set (list '⊥ (get-label e) context s))
       (eval-step e ρ s context (set-add seen this))))
 
 
@@ -382,9 +391,11 @@
 
 (define/contract (eval-syscall label name es ρ s context seen)
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
+  (displayln "Evaluating a syscall...")
   (define results (eval-begin label es ρ s (add-edge context label (get-label (first es))) seen))
   (forall results
           (pλ (r last-label context′ s0)
+              (display-graph context′)
               (for [(node (get-backwards-slice context′ last-label))]
                 (add-syscalls! node (set name)))
               (set (list 1 last-label context′ s0)
@@ -440,9 +451,9 @@
           
 
 ;; (list expr) ρ store seen -> (set (list exp))
-(define/contract (eval-list-of-exprs l es ρ s context seen)
-  (-> symbol? (listof label-exp?) env/c store? graph? seen?
-      (set/c (list/c list? symbol? graph? store?)))
+(define (eval-list-of-exprs l es ρ s context seen)
+;  (-> symbol? (listof label-exp?) env/c store? graph? seen?
+ ;     (set/c (list/c list? symbol? graph? store?)))
   (match es
     ['() (set (list '() l context s))]
     [(cons e es)
@@ -463,12 +474,6 @@
     (begin body ...)))
           
 
-
-(define/contract (update-syscalls-in-list es syscalls)
-  (-> (listof exp?) (listof set?) void?)
-  (for/reverse/enumerate i [(e es)]
-    (define l (get-label e))
-    (add-syscalls! l (list-ref/set syscalls (add1 i)))))
 
 (define/contract (free e)
   (-> label-exp? set?)

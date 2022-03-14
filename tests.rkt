@@ -1,6 +1,6 @@
 #lang racket
 (require "adi.rkt")
-
+(define ⊥ '⊥)
 (require rackunit)
 (require (for-syntax rackunit racket/set))
 (define-syntax (check-mapping stx)
@@ -82,17 +82,17 @@
 ; Recursion tests
 
 ; Recursive store test 
-(check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set))
+(check-equal? (run `((rec f (x) (f (cons 1 x))) empty)) (set ⊥))
   
-(check-equal? (run `((rec f (x) (f x)) 1)) (set))
+(check-equal? (run `((rec f (x) (f x)) 1)) (set ⊥))
   
 (check-equal?
  (run `((rec f (x) (if (= 1 (syscall write x 2))
                        2
-                       (f 1))) 1)) (set 2))
+                       (f 1))) 1)) (set 2 ⊥))
   
 (check-equal?
- (run `((rec f (x) (f (add1 x))) 1)) (set))
+ (run `((rec f (x) (f (add1 x))) 1)) (set ⊥))
 
   
 (check-equal? (run `((rec f (x)
@@ -100,19 +100,19 @@
                            #t
                            (f (- x 1))))
                      2))
-              (set #t))
+              (set #t ⊥))
   
 (check-equal?
  (run `((rec f (x)
           (if (= (add1 x) (add1 5))
               2
               (f x))) 1))
- (set 2))
+ (set 2 ⊥))
   
 (check-equal?
  (run `((rec f (x)
           (cons x (f x))) empty))
- (set))
+ (set ⊥))
    
 (check-equal? (run `(if #f #t #f)) (set #f))
 (check-equal? (run `(let (x 5) x)) (set 5))
@@ -126,7 +126,7 @@
                     1
                     (* x (fact (sub1 x))))))
      (fact 5)))
- (set 'nat))
+ (set 'nat ⊥))
 (check-equal? (run `(let (add1 (let (x 1) (λ (y) (+ y x))))
                       (add1 2))) (set 'nat))
 (check-equal?
@@ -158,7 +158,7 @@
          (let (sum (λ (xs) (foldr + 0 xs)))
            (let (map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs)))
              (sum (map (λ (x) (+ x 1)) (cons 1 (cons 2 (cons 3 empty)))))))))
- (set 'nat))
+ (set 'nat ⊥))
 (check-equal?
  (run `(syscall write 1))
  (set 0 1))
