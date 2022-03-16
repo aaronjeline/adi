@@ -287,6 +287,8 @@
 
 ;; Map from program labels to sets of syscalls
 (define syscall-map (make-hash))
+
+
 ;; Reset the syscall map
 (define (clear-syscall-map!)
   (set! syscall-map (make-hash)))
@@ -298,20 +300,36 @@
   (hash-set! syscall-map l (∪ cur new-calls))
   (void))
 
+(struct syscall-point (label call) #:transparent)
+
+(define simple-example `(syscall (label a) write (prim (label c) 1) (prim (label b) 2)))
+
+(define (build-syscall-map context-graph e)
+ ;f (display-graph context-graph)
+  (for [(p (syscall-points e))]
+    (for [(label (get-backwards-slice context-graph (syscall-point-label p)))]
+      (add-syscalls! label (set (syscall-point-call p))))))
+
 (define/contract (query-syscalls e)
   (-> label-exp? set?)
   (hash-ref syscall-map (get-label e) (set)))
 
 (define (run/core e (needs-labelling #t))
   (clear-syscall-map!)
-  (define e_ (if needs-labelling (label-exp e) e))
-  (eval e_ init-env init-store (new-graph) (set)))
+  (eval e init-env init-store (new-graph) (set)))
 
-(define (run/view-graph e (needs-labelling #t))
-  (display-graph (apply merge-graphs* (set->list (smap third (run/core e needs-labelling))))))
+(define (run/view-graph e)
+  (display-graph (apply merge-graphs* (set->list (smap third (run/core e #f))))))
 
 (define (run e (needs-labelling #t))
-  (smap car (run/core e needs-labelling)))
+  (define e′
+    (if needs-labelling
+        (label-exp e)
+        e))
+  (define result (run/core e′ needs-labelling))
+  (define total-graph (apply merge-graphs* (set->list (smap third result))))
+  (build-syscall-map total-graph e′)
+  (smap car result))
 
 ;; TODO delete
 (define example
@@ -370,36 +388,33 @@
 
 (define/contract (eval-if l e0 e1 e2 ρ s context seen)
   (-> symbol? label-exp? label-exp? label-exp? env? store? graph? seen? response?)
-  (define context′ (add-edge context l (get-label e0)))
-  (define guards (eval e0 ρ s context′ seen))
-  (forall guards (pλ (v last-label context′′ s0)
+  (define guards (eval e0 ρ s context seen))
+  (forall guards (pλ (v last-label context′ s0)
+                     (define context′′ (add-edge context′ last-label l))
                      (if v
-                         (eval e1 ρ s0 (add-edge context′′ last-label (get-label e1)) seen)
-                         (eval e2 ρ s0 (add-edge context′′ last-label (get-label e2)) seen)))))
+                         (eval e1 ρ s0 (add-edge context′′ l (get-first-control-label e1)) seen)
+                         (eval e2 ρ s0 (add-edge context′′ l (get-first-control-label e2)) seen)))))
                     
                      
 
 (define/contract (eval-let l x def body ρ s context seen)
   (-> symbol? symbol? any/c any/c env/c store? graph? seen? response?)
-  (define definitions (eval def ρ s (add-edge context l (get-label def)) seen))
+  (define definitions (eval def ρ s (add-edge context l (get-first-control-label def)) seen))
   (forall definitions
           (pλ (v last-label context′ s0)     
-              (eval body (bind ρ x v) s0 (add-edge context′ last-label (get-label body)) seen))))
+              (eval body (bind ρ x v) s0 (add-edge context′ last-label (get-first-control-label body)) seen))))
              
           
 
 
 (define/contract (eval-syscall label name es ρ s context seen)
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
-  (displayln "Evaluating a syscall...")
-  (define results (eval-begin label es ρ s (add-edge context label (get-label (first es))) seen))
+  (define results (eval-begin label es ρ s context seen))
   (forall results
           (pλ (r last-label context′ s0)
-              (display-graph context′)
-              (for [(node (get-backwards-slice context′ last-label))]
-                (add-syscalls! node (set name)))
-              (set (list 1 last-label context′ s0)
-                   (list 0 last-label context′ s0)))))
+              (define context′′ (add-edge context′ last-label label))
+              (set (list 1 label context′′ s0)
+                   (list 0 label context′′ s0)))))
   
     
 
@@ -410,10 +425,10 @@
      (f args (procedure-call-context cur-l l context s))]
     [(closure params body frame)
      (define ρ0 (bind (bind empty-env frame) (zip params args)))
-     (eval body ρ0 s (add-edge context l (get-label body)) seen)]
+     (eval body ρ0 s (add-edge context l (get-first-control-label body)) seen)]
     [(rec-closure fname params body frame)
      (define p0 (bind (bind empty-env frame) (zip (cons fname params) (cons f args))))
-     (eval body p0 s (add-edge context l (get-label body)) seen)]
+     (eval body p0 s (add-edge context l (get-first-control-label body)) seen)]
     [_ (error "Application of non-function: " f)]))
 
 ;; Evlaute the funciton and all the arguments
@@ -496,6 +511,26 @@
     [(cons 'syscall (cons (? label?) (cons _ args)))
      (apply ∪ (map free args))]
     [(list 'app (? label?) (? list? app)) (apply ∪ (map free app))]))
+
+(define (syscall-points e)
+  (match e
+     [(? label-prim?) (set)]
+    [(? label-variable?) (set)]
+    [`(if ,(? label?) ,e0 ,e1 ,e2)
+     (apply ∪ (map syscall-points (list e0 e1 e2)))]
+    [`(let ,(? label?) (,x ,def) ,body)
+     (∪ (syscall-points def) (syscall-points body))]
+    [`(λ ,(? label?) ,xs ,def) (syscall-points def)]
+    [`(rec ,(? label?) ,f ,xs ,def) (syscall-points def)]
+    [(cons 'begin
+           (cons
+            (? label?)
+            es))
+     (apply ∪ (map syscall-points es))]
+    [(cons 'syscall (cons (? label? l) (cons call-name args)))
+     (set-add (apply ∪ (map syscall-points args)) (syscall-point (label->symbol l) call-name))]
+    [(list 'app (? label?) (? list? app)) (apply ∪ (map syscall-points app))]))
+    
 
 (define (type-error loc t v)
   (error (format "~a: Type Error! Expected: ~a, Got: ~a" loc t (typeof v))))
