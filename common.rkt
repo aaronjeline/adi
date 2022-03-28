@@ -90,7 +90,7 @@
 
 (define/pred label? (list 'label (? symbol?)))
 (define/pred if? (list 'if (? exp?) (? exp?) (? exp?)))
-(define/pred let? (list 'let (list (? symbol?) (? exp?)) (? exp?)))
+(define/pred let? (list 'let (list (list (? symbol?) (? exp?))) (? exp?)))
 (define/pred λ? (list 'λ (? (listof symbol?)) (? exp?)))
 (define/pred rec? (list 'rec (? symbol?) (? (listof symbol?)) (? exp?)))
 (define/pred begin? (cons 'begin (? (listof exp?))))
@@ -99,7 +99,7 @@
 (define/pred label-if? (list 'if (? label?) (? label-exp?) (? label-exp?) (? label-exp?)))
 
 
-(define/pred label-let? (list 'let (? label?) (list (? symbol?) (? label-exp?)) (? label-exp?)))
+(define/pred label-let? (list 'let (? label?) (list (list (? symbol?) (? label-exp?))) (? label-exp?)))
 (define/pred label-λ? (list 'λ (? label?) (? (listof symbol?)) (? label-exp?)))
 (define/pred label-rec? (list 'rec (? label?) (? symbol?) (? (listof symbol?)) (? label-exp?)))
 (define/pred label-begin? (cons 'begin (cons (? label?) (? (listof label-exp?)))))

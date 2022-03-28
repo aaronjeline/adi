@@ -374,7 +374,7 @@
     [(? label-variable? x) (set (list (env-lookup ρ (get-variable x)) (get-label e) context s))]
     [`(if (label ,l) ,e0 ,e1 ,e2) (eval-if l e0 e1 e2 ρ s context seen)]
     [`(let (label ,l) ((,x ,def)) ,body) (eval-let l x def body ρ s context seen)]
-    [`(λ (label ,l) (,xs) ,def) (set (list (build-closure xs def (set->list (free e)) ρ) l context s))]
+    [`(λ (label ,l) ,(? list? xs) ,def) (set (list (build-closure xs def (set->list (free e)) ρ) l context s))]
     [`(rec (label ,l) ,f ,xs ,def)
      (set (list (build-recursive-closure f xs def e ρ) l context s))]
     
@@ -501,7 +501,7 @@
      (∪
       (free def)
       (set-subtract (free body) (set x)))]
-    [`(λ ,(? label?) (,xs) ,def) (set-subtract (free def) (apply set xs))]
+    [`(λ ,(? label?) ,(? list? xs) ,def) (set-subtract (free def) (apply set xs))]
     [`(rec ,(? label?) ,f ,xs ,def) (set-subtract (free def) (apply set (cons f xs)))]
     [(cons 'begin
            (cons
@@ -520,7 +520,7 @@
      (apply ∪ (map syscall-points (list e0 e1 e2)))]
     [`(let ,(? label?) ((,x ,def)) ,body)
      (∪ (syscall-points def) (syscall-points body))]
-    [`(λ ,(? label?) (,xs) ,def) (syscall-points def)]
+    [`(λ ,(? label?) ,(? list? xs) ,def) (syscall-points def)]
     [`(rec ,(? label?) ,f ,xs ,def) (syscall-points def)]
     [(cons 'begin
            (cons

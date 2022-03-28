@@ -60,20 +60,20 @@
 (module+ test
   (require rackunit)
   (check-equal? (run `(if #f #t #f)) #f)
-  (check-equal? (run `(let (x 5) x)) 5)
+  (check-equal? (run `(let ((x 5)) x)) 5)
   (check-equal? (run `((λ (x) (+ x 1)) 5)) 6)
   (check-equal?
    (run
-    `(let (fact (rec fact (x)
+    `(let ((fact (rec fact (x)
                   (if (= x 0)
                       1
-                      (* x (fact (sub1 x))))))
+                      (* x (fact (sub1 x)))))))
        (fact 5)))
    120)
-  (check-equal? (run `(let (add1 (let (x 1) (λ (y) (+ y x))))
+  (check-equal? (run `(let ((add1 (let ((x 1)) (λ (y) (+ y x)))))
                         (add1 2))) 3)
   (check-equal?
-   (run `(let (p (box 3))
+   (run `(let ((p (box 3)))
            (begin
              (set-box! p 5)
              (unbox p))))
@@ -82,19 +82,19 @@
    (run `(car (cdr (cons 1 (cons 2 (cons 3 empty))))))
    2)
   (check-equal?
-   (run `(let (length (rec length (x)
+   (run `(let ((length (rec length (x)
                         (if (empty? x)
                             0
-                            (+ 1 (length (cdr x))))))
+                            (+ 1 (length (cdr x)))))))
            (length (cons 1 (cons 2 (cons 3 empty))))))
    3)
   (check-equal?
-   (run `(let (foldr (rec foldr (f b xs)
+   (run `(let ((foldr (rec foldr (f b xs)
                        (if (empty? xs)
                            b
-                           (f (car xs) (foldr f b (cdr xs))))))
-           (let (sum (λ (xs) (foldr + 0 xs)))
-             (let (map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs)))
+                           (f (car xs) (foldr f b (cdr xs)))))))
+           (let ((sum (λ (xs) (foldr + 0 xs))))
+             (let ((map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs))))
                (sum (map (λ (x) (+ x 1)) (cons 1 (cons 2 (cons 3 empty)))))))))
    9))
 
@@ -107,11 +107,11 @@
     [`(if ,e0 ,e1 ,e2)
      (letp (guard s0) (eval e0 ρ s)
            (eval (if guard e1 e2) ρ s0))]
-    [`(let (,x ,def) ,body)
+    [`(let ((,x ,def)) ,body)
      (letp (v s0) (eval def ρ s)
            (let [(ρ0 (bind ρ x v))]
              (eval body ρ0 s0)))]
-    [`(λ ,xs ,def) (cons (build-closure xs def (set->list (free e)) ρ) s)]
+    [`(λ ,(? list? xs) ,def) (cons (build-closure xs def (set->list (free e)) ρ) s)]
     [`(rec ,f ,xs ,def)
      (cons (build-closure xs def (set->list (free e)) ρ) s)]
     [(cons 'begin es) (eval-begin es ρ s)]
@@ -274,11 +274,11 @@
     [(? op2?) (∪ (free (op2-e1 e)) (free (op2-e2 e)))]
     [`(if ,e0 ,e1 ,e2)
      (apply ∪ (map free (list e0 e1 e2)))]
-    [`(let (,x ,def) ,body)
+    [`(let ((,x ,def)) ,body)
      (∪
       (free def)
       (set-subtract (free body) (set x)))]
-    [`(λ ,xs ,def) (set-subtract (free def) (apply set xs))]
+    [`(λ ,(? list? xs) ,def) (set-subtract (free def) (apply set xs))]
     [`(rec ,f ,xs ,def) (set-subtract (free def) (apply set (cons f xs)))]
     [(cons 'begin es) (apply ∪ (map free es))]
     [(cons 'syscall (cons _ args))

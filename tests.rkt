@@ -21,7 +21,7 @@
                                                                                 (b . (write))))
 
 (check-mapping (let (label a)
-                 (x (syscall (label b) write (prim (label c) 1) (prim (label d) 2)))
+                 ((x (syscall (label b) write (prim (label c) 1) (prim (label d) 2))))
                  (var (label e) x))
                ((a . (write))
                 (b . (write))
@@ -115,22 +115,22 @@
  (set ⊥))
    
 (check-equal? (run `(if #f #t #f)) (set #f))
-(check-equal? (run `(let (x 5) x)) (set 5))
+(check-equal? (run `(let ((x 5)) x)) (set 5))
 (check-equal? (run `((λ (x) (+ x 1)) 5)) (set 'nat))
 (check-equal? (run `(if (= 1 (add1 1)) 1 0)) (set 1 0))
   
 (check-equal?
  (run
-  `(let (fact (rec fact (x)
+  `(let ((fact (rec fact (x)
                 (if (= x 0)
                     1
-                    (* x (fact (sub1 x))))))
+                    (* x (fact (sub1 x)))))))
      (fact 5)))
  (set 'nat ⊥))
-(check-equal? (run `(let (add1 (let (x 1) (λ (y) (+ y x))))
+(check-equal? (run `(let ((add1 (let ((x 1)) (λ (y) (+ y x)))))
                       (add1 2))) (set 'nat))
 (check-equal?
- (run `(let (p (box 3))
+ (run `(let ((p (box 3)))
          (begin
            (set-box! p 5)
            (unbox p))))
@@ -144,19 +144,19 @@
    (run `(car (cdr (cons 1 (cons 2 (cons 3 empty))))))
    (set 2))
 (check-equal?
- (run `(let (length (rec length (x)
+ (run `(let ((length (rec length (x)
                       (if (empty? x)
                           0
-                          (+ 1 (length (cdr x))))))
+                          (+ 1 (length (cdr x)))))))
          (length (cons 1 (cons 2 (cons 3 empty))))))
  (set 'nat))
 (check-equal?
- (run `(let (foldr (rec foldr (f b xs)
+ (run `(let ((foldr (rec foldr (f b xs)
                      (if (empty? xs)
                          b
-                         (f (car xs) (foldr f b (cdr xs))))))
-         (let (sum (λ (xs) (foldr + 0 xs)))
-           (let (map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs)))
+                         (f (car xs) (foldr f b (cdr xs)))))))
+         (let ((sum (λ (xs) (foldr + 0 xs))))
+           (let ((map (λ (f xs) (foldr (λ (x ys) (cons (f x) ys)) empty xs))))
              (sum (map (λ (x) (+ x 1)) (cons 1 (cons 2 (cons 3 empty)))))))))
  (set 'nat ⊥))
 (check-equal?

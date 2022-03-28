@@ -31,8 +31,8 @@
     [(? prim?) (make-label-prim e)]
     [(? variable?) (make-label-variable e)]
     [(list 'if e0 e1 e2) (list 'if (new-label) (label-exp e0) (label-exp e1) (label-exp e2))]
-    [`(let (,x ,def) ,body) `(let ,(new-label) (,x ,(label-exp def)) ,(label-exp body))]
-    [`(λ ,xs ,def) `(λ ,(new-label) ,xs ,(label-exp def))]
+    [`(let ((,x ,def)) ,body) `(let ,(new-label) ((,x ,(label-exp def))) ,(label-exp body))]
+    [`(λ ,(? list? xs) ,def) `(λ ,(new-label) ,xs ,(label-exp def))]
     [`(rec ,name ,xs ,def) `(rec ,(new-label) ,name ,xs ,(label-exp def))]
     [(cons 'begin es)
      (cons 'begin
@@ -88,7 +88,7 @@
     [`(prim (label ,l) ,_) l]
     [`(var (label ,l) ,_) l]
     [`(if (label ,l) ,e1 ,_ ,_) (get-first-control-label e1)]
-    [`(let (label ,l) (,x ,e) ,_) (get-first-control-label e)]
+    [`(let (label ,l) ((,x ,e)) ,_) (get-first-control-label e)]
     [`(λ (label ,l) ,_ ,_) l]
     [`(rec (label ,l) ,_ ,_ ,_) l]
     [(cons 'begin (cons `(label ,l) _)) l]
