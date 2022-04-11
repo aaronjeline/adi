@@ -1,5 +1,5 @@
 #lang racket
-(require threading "common.rkt" "labeller.rkt" "graph.rkt")
+(require threading "common.rkt" "labeller.rkt" "graph.rkt" "algos.rkt")
 (provide (all-defined-out))
 
 (define-syntax-rule (letpair (x y z) d b)
@@ -316,12 +316,13 @@
 
 (define (run/core e (needs-labelling #t))
   (clear-syscall-map!)
-  (eval e init-env init-store (new-graph) (set)))
+  (define start-label (get-label e))
+  (eval e init-env init-store (new-graph start-label) (set)))
 
 (define (run/view-graph e)
   (display-graph (apply merge-graphs* (set->list (smap third (run/core e #f))))))
 
-(define (run e (needs-labelling #t))
+(define (run-and-get-graph e (needs-labelling #t))
   (define e′
     (if needs-labelling
         (label-exp e)
@@ -329,7 +330,10 @@
   (define result (run/core e′ needs-labelling))
   (define total-graph (apply merge-graphs* (set->list (smap third result))))
   (build-syscall-map total-graph e′)
-  (smap car result))
+  (cons (smap car result) total-graph))
+
+(define (run e (needs-labelling #t))
+  (car (run-and-get-graph e needs-labelling)))
 
 ;; TODO delete
 (define example
@@ -350,7 +354,11 @@
   (-> label-exp? hash?)
   (run e #f)
   syscall-map)
-
+  
+(define (run-algo e (needs-labelling #f))
+  (define g (cdr (run-and-get-graph e needs-labelling)))
+  (display-graph g)
+  (find-pledges g syscall-map))
 
 (define syscall-set? (set/c symbol?))
 
