@@ -1,12 +1,44 @@
 #lang racket
-(require "graph.rkt")
+(require "graph.rkt" "common.rkt")
 (provide find-pledges)
+
+(define (find-pledges g syscall-map)
+  (find-pledges-step (graph-starting-edge g) g syscall-map (set)))
+
+  
+
+(define (find-pledges-step n g syscall-map seen)
+  (define now-seen (set-add seen n))
+  (define (not-seen? x)
+    (not (set-member? now-seen x)))
+  (define next-syscalls
+    (apply ∪
+           (for/list [(neighbor (neighbors n g))]
+             (hash-ref syscall-map neighbor (set)))))
+  (define my-syscalls (hash-ref syscall-map n (set)))
+  (define diff (set-subtract my-syscalls next-syscalls))
+  (printf "Label: ~a syscalls: ~a\nnext-syscalls: ~a,diff: ~a\n" n my-syscalls next-syscalls diff)
+  (define rest
+    (apply append
+           (for/list [(neighbor (filter not-seen? (set->list (neighbors n g))))]
+             (find-pledges-step neighbor g syscall-map now-seen))))
+  (if (set-empty? diff)
+      rest
+      (cons (build-pledge-entry n diff) rest)))
+            
+
+(define (build-pledge-entry label syscalls)
+  (cons label (set->list syscalls)))
+  
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; tests
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (module+ test
   (require rackunit))
 
-(define (find-pledges g syscall-map)
-  (find-pledges-step (graph-starting-edge g) g syscall-map (set)))
 
 (module+ test
   (define g (add-edge (new-graph 'a) 'a 'b))
@@ -26,33 +58,3 @@
   (check-equal? (find-pledges g syscall-map)
                 (list (cons 'a (list 'read))
                       (cons 'b (list 'write)))))
-  
-
-(define (find-pledges-step n g syscall-map seen)
-  (define now-seen (set-add seen n))
-  (define (not-seen? x)
-    (not (set-member? now-seen x)))
-  (define next-syscalls
-    (apply union
-           (for/list [(neighbor (neighbors n g))]
-             (hash-ref syscall-map neighbor (set)))))
-  (define my-syscalls (hash-ref syscall-map n (set)))
-  (define diff (set-subtract my-syscalls next-syscalls))
-  (printf "Label: ~a syscalls: ~a\nnext-syscalls: ~a,diff: ~a\n" n my-syscalls next-syscalls diff)
-  (define rest
-    (apply append
-           (for/list [(neighbor (filter not-seen? (set->list (neighbors n g))))]
-             (find-pledges-step neighbor g syscall-map now-seen))))
-  (if (set-empty? diff)
-      rest
-      (cons (build-pledge-entry n diff) rest)))
-            
-
-(define (build-pledge-entry label syscalls)
-  (cons label (set->list syscalls)))
-  
-
-(define (union . xs)
-  (if (empty? xs)
-      (set)
-      (apply set-union xs)))

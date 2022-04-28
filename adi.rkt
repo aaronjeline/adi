@@ -305,7 +305,6 @@
 (define simple-example `(syscall (label a) write (prim (label c) 1) (prim (label b) 2)))
 
 (define (build-syscall-map context-graph e)
- ;f (display-graph context-graph)
   (for [(p (syscall-points e))]
     (for [(label (get-backwards-slice context-graph (syscall-point-label p)))]
       (add-syscalls! label (set (syscall-point-call p))))))
@@ -334,17 +333,6 @@
 
 (define (run e (needs-labelling #t))
   (car (run-and-get-graph e needs-labelling)))
-
-;; TODO delete
-(define example
-  `(app (label j)
-      ((rec (label a) foo (x) (if (label b) (app (label c)
-                                               ((var (label d) =)
-                                                (prim (label e) 1)
-                                                (syscall (label f) write (var (label g) x))))
-                                (prim (label h) 2)
-                                (app (label k) ((var (label l) foo) (prim (label m) 1)))))
-       (prim (label n) 1))))
 
 
 (define (run/dbg e)
@@ -665,10 +653,7 @@
 
 (define variable? symbol?)
 
-(define (∪ . xs)
-  (if (empty? xs)
-      (set)
-      (apply set-union xs)))
+
 
 (define (zip a b)
   (map list a b))

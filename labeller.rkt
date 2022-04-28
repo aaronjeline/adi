@@ -5,28 +5,10 @@
          get-label
          get-first-control-label)
 
-(module+ test
-  (require rackunit))
 
-#;
-(define (exp? e)
-  ((or/c
-    number?
-    boolean?
-    symbol?
-    empty-symb?
-    if?
-    let?
-    λ?
-    rec?
-    begin?
-    syscall?
-    (listof exp?)) e))
-
-(define (new-label)
-  (list 'label (gensym)))
-
-(define (label-exp e)
+;;given an expression inserts labels
+(define/contract (label-exp e)
+  (-> exp? label-exp?)
   (match e
     [(? prim?) (make-label-prim e)]
     [(? variable?) (make-label-variable e)]
@@ -52,26 +34,9 @@
      (list 'app (new-label) (for/list [(e es)]
                               (label-exp e)))]))
 
-
-(define/contract (make-label-prim e)
-  (-> prim? label-prim?)
-  `(prim ,(new-label) ,e))
-
-(define/contract (get-prim e)
-  (-> label-prim? (or/c boolean? number? symbol?))
-  (match e
-    [`(prim ,_ ,p) p]))
-
-(define/contract (make-label-variable x)
-  (-> variable? label-variable?)
-  `(var ,(new-label) ,x))
-
-(define (get-variable lx)
-  (-> label-variable? variable?)
-  (match lx
-    [`(var ,_ ,x) x]))
-
-(define (get-label e)
+;;Returns the first label for a given expression
+(define/contract (get-label e)
+  (-> label-exp? symbol?)
   (match e
     [`(prim (label ,l) ,_) l]
     [`(var (label ,l) ,_) l]
@@ -85,7 +50,8 @@
 
 ;; Get the first label control will flow to after entering
 ;; an expression
-(define (get-first-control-label e)
+(define/contract (get-first-control-label e)
+  (-> label-exp? symbol?)
   (match e
     [`(prim (label ,l) ,_) l]
     [`(var (label ,l) ,_) l]
@@ -103,22 +69,57 @@
        [(cons function-exp _) (get-first-control-label function-exp)])]))
 
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; label functions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;creates a new label using gensym to ensure uniqness
+(define (new-label)
+  (list 'label (gensym)))
+
+
+;;extracts the symbol from the label
+(define (label->symbol l)
+  (match l
+    [`(label ,x) x]))
+
+;;Given a primitive wraps it to a label expression
+(define/contract (make-label-prim e)
+  (-> prim? label-prim?)
+  `(prim ,(new-label) ,e))
+
+;;given a label prim expression unwraps it to it's primitive value
+(define/contract (get-prim e)
+  (-> label-prim? (or/c boolean? number? symbol?))
+  (match e
+    [`(prim ,_ ,p) p]))
+
+;;Given a variable wraps it to a label expression
+(define/contract (make-label-variable x)
+  (-> variable? label-variable?)
+  `(var ,(new-label) ,x))
+
+;;given a label variable expression unwraps it to it's primitive value
+(define (get-variable lx)
+  (-> label-variable? variable?)
+  (match lx
+    [`(var ,_ ,x) x]))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; tests
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(module+ test
+  (require rackunit))
+
 (module+ test
   (check-equal?
    (get-first-control-label '(syscall (label b) write (prim (label c) 1) (prim (label d) 2)))
    'c))
-            
-
-
-    
-  
+             
 (module+ test
   (check-equal? (get-label '(prim (label b) 2)) 'b))
 
 
-(define (label->symbol l)
-  (match l
-    [`(label ,x) x]))
-   
 
   
