@@ -549,14 +549,17 @@
      (set-add (apply ∪ (map syscall-points args)) (syscall-point (label->symbol l) call-name))]
     [(list 'app (? label?) (? list? app)) (apply ∪ (map syscall-points app))]))
 
+;; given a list of expressions and the current set of permitted syscalls returns the expressions and the most recent
+;; set of permitted syscalls
+;; IMPORTANT!!! PRESERVES ORDER!!!
+(define (pledges-insert es s)
+  (match es
+    ['() (cons '() s)]
+    [(cons e es) (match-let ([(cons e0 s0) (pledge-insert e s)])
+                   (match-let ([(cons es0 s1) (pledges-insert es s0)])
+                     (cons (cons e0 es0) s1)))]))
 
-;;looks up what pledge if any corresponds to the given label, else #f
-(define (lookup sys l)
-  (match sys
-    [(cons `(,l1 ,call) rest) (if (equal? l l1) call (lookup rest l))]
-    [_ #f]))
-
-;;looksup label in syscall-map returns false if it doesn't exist
+;;looks up label in syscall-map returns false if it doesn't exist
 (define (ref l)
   (hash-ref syscall-map l (λ () #f)))
 
@@ -572,41 +575,71 @@
 ;; the current max amount of calls available and current set of available calls and inserts pledge statements when needed
 ;; also deletes labels as it goes to compress two passes into one
 (define/contract (pledge-insert e s)
-  (-> label-exp? set? exp?)
+  (-> label-exp? set? (cons/c exp? set?))
   (match e
     [`(prim (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                `(begin (pledge ,(get-sub s st)) e0)
-                                                e0))]
+                                                (cons `(begin (pledge ,(get-sub s st)) e0) st)
+                                                (cons e0 s)))]
     [`(var (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                `(begin (pledge ,(get-sub s st)) e0)
-                                                e0))]
+                                                (cons `(begin (pledge ,(get-sub s st)) e0) st)
+                                                (cons e0 s)))]
     [`(if (label ,l) ,e0 ,e1 ,e2) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                           `(begin (pledge ,(get-sub s st)) (if ,(pledge-insert e0 st) ,(pledge-insert e1 st) ,(pledge-insert e2 st)))
-                                                           `(if ,(pledge-insert e0 s) ,(pledge-insert e1 s) ,(pledge-insert e2 s))))]
+                                                          (match-let ([(cons (list es0 es1) st1) (pledges-insert (list e0 e1) st)]
+                                                                      [(cons (list es0 es2) st2) (pledges-insert (list e0 e2) st)])
+                                                            (cons `(begin (pledge ,(get-sub s st)) (if ,es0 ,es1 ,es2)) (set-union st1 st2)))
+                                                          (match-let ([(cons (list es0 es1) s1) (pledges-insert (list e0 e1) s)]
+                                                                      [(cons (list es0 es2) s2) (pledges-insert (list e0 e2) s)])
+                                                           (cons `(if ,es0 ,es1 ,es2) (set-union s1 s2)))))]
     [`(let (label ,l) ((,x ,def)) ,body) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                           `(begin (pledge ,(get-sub s st))
-                                                                   `(let ((,x ,(pledge-insert def st))) ,(pledge-insert body st)))
-                                                           `(let ((,x ,(pledge-insert def s))) ,(pledge-insert body s))))]
+                                                                 (match-let
+                                                                     ([(cons (list def0 bod) st1) (pledges-insert (list def body) st)])
+                                                           (cons `(begin (pledge ,(get-sub s st))
+                                                                   `(let ((,x ,def0)) ,bod)) st1))
+                                                           (match-let
+                                                                     ([(cons (list def0 bod) s1) (pledges-insert (list def body) s)])
+                                                           (cons `(let ((,x ,def0)) ,bod) s1))))]
     [`(λ (label ,l) ,(? list? xs) ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                           `(begin (pledge ,(get-sub s st))
-                                                                   (λ ,xs ,(pledge-insert def st)))
-                                                           `(λ ,xs ,(pledge-insert def s))))]
+                                                           (match-let ([(cons def0 st0) (pledge-insert def st)])
+                                                             (cons `(begin (pledge ,(get-sub s st))
+                                                                   (λ ,xs ,def0)) st0))
+                                                           (match-let ([(cons def0 s0) (pledge-insert def s)])
+                                                           (cons `(λ ,xs ,def0) s0))))] 
     [`(rec (label ,l) ,name ,xs ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                              `(begin (pledge ,(get-sub s st))
-                                                                      (rec ,name ,xs ,(pledge-insert def st)))
-                                                              `(rec ,name ,xs ,(pledge-insert def s))))]
+                                                              (match-let ([(cons def0 st0) (pledge-insert def st)])
+                                                                (cons  `(begin (pledge ,(get-sub s st))
+                                                                               (rec ,name ,xs ,def0)) st0))
+                                                              (match-let ([(cons def0 s0) (pledge-insert def s)])
+                                                                (cons `(rec ,name ,xs ,def0) s0))))]
     [`(begin (label ,l) ,es ...)  (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                              `(begin (pledge ,(get-sub s st))
-                                                                      ,(for/list [(e es)] (pledge-insert e st)))
-                                                              `(begin ,(for/list [(e es)] (pledge-insert e s)))))]
+                                                          (match-let ([(cons es0 st0) (pledges-insert es st)])
+                                                            (cons (cons 'begin (cons `(pledge ,(get-sub s st)) es0)) st0))
+                                                          (match-let ([(cons es0 s0) (pledges-insert es s)])
+                                                            (cons (cons 'begin es0) s0))))]
     [`(syscall (label ,l) ,call ,rst ...) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                                  (match-let ([(cons es0 st0) (pledges-insert rst st)])
+                                                (cons `(begin (pledge ,(get-sub s st))
+                                                        ,(cons 'syscall (cons call es0))) st0))
+                                                                  
+                                                (match-let ([(cons es0 s0) (pledges-insert rst s)])
+                                                (cons (cons 'syscall (cons call es0)) s0))))]
+    [`(app (label ,l) ,es) (let ((st (ref l))) (displayln es) (if (and st (< (set-count st) (set-count s))) 
+                                                       (match-let ([(cons es0 st0) (pledges-insert es st)])
+                                                         (cons 
                                                 `(begin (pledge ,(get-sub s st))
-                                                        ,(cons 'syscall (cons call (for/list [(e rst)] (pledge-insert e st)))))
-                                                (cons 'syscall (cons call (for/list [(e rst)] (pledge-insert e s))))))]
-    [`(app (label ,l) ,es ...) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                `(begin (pledge ,(get-sub s st))
-                                                        ,(for/list [(e es)] (pledge-insert e st)))
-                                                (for/list [(e es)] (pledge-insert e s))))]))
+                                                        ,es0) st0))
+                                                       (match-let ([(cons es0 s0) (pledges-insert es s)])
+                                                         (cons es0 s0))))]))
+
+(module+ test
+  (require rackunit)
+  (check-equal? (let ((le (label-exp '(begin (syscall fork) (syscall displayln 5) (syscall exec) (syscall displayln 6)))))
+                  (let ((d (run-algo le #f)) (s (hash-ref syscall-map (get-label le))))
+                    (car (pledge-insert le s))))
+                '(begin (syscall fork) (begin (pledge fork) (syscall displayln 5)) (syscall exec) (begin (pledge exec) (syscall displayln 6))))
+  (check-equal? (let ((le (label-exp '(let ((f (syscall fork))) (if f (syscall displayln 5) (syscall displayln 7))))))
+                  (let ((d (run-algo le #f)) (s (hash-ref syscall-map (get-label le))))
+                    (car (pledge-insert le s))))
+                '(let ((f (syscall fork))) (begin (pledge fork) (if f (syscall displayln 5) (syscall displayln 7))))))
   
 (define (type-error loc t v)
   (error (format "~a: Type Error! Expected: ~a, Got: ~a" loc t (typeof v))))

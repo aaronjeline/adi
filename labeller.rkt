@@ -3,9 +3,7 @@
 (provide (contract-out (label-exp (-> exp? label-exp?)))
          get-prim get-variable  label->symbol
          get-label
-         get-first-control-label
-         new-label
-         unlabel)
+         get-first-control-label)
 
 (module+ test
   (require rackunit))
@@ -53,27 +51,6 @@
     [(? list? es)
      (list 'app (new-label) (for/list [(e es)]
                               (label-exp e)))]))
-
-
-;;label exp -> exp
-;; removes labels from a label expression (unlabel (label-exp e)) = e
-(define (unlabel e)
-  (match e
-    [`(prim ,l ,e) e]
-    [`(var ,l ,e) e]
-    [`(if ,l0 ,e0 ,e1 ,e2) `(if ,(unlabel e0) ,(unlabel e1) ,(unlabel e2))]
-    [`(let ,l ((,x ,def)) ,body) `(let ((,x ,(unlabel def))) ,(unlabel body))]
-    [`(λ ,l ,(? list? xs) ,def) `(λ ,xs ,(unlabel def))]
-    [`(rec ,l ,name ,xs ,def) `(rec ,name ,xs ,(unlabel def))]
-    [`(begin ,l ,es ...) (cons 'begin
-                 (for/list [(e es)]
-                   (unlabel e)))]
-    [`(syscall ,l ,call ,rst ...)
-     (cons 'syscall (cons call (for/list [(e rst)]
-               (unlabel e))))]
-    [`(pledge ,call) e]
-    [`(app ,l ,es ...) (for/list [(e es)]
-                              (unlabel e))]))
 
 
 (define/contract (make-label-prim e)
