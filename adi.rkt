@@ -314,20 +314,20 @@
   (-> label-exp? set?)
   (hash-ref syscall-map (get-label e) (set)))
 
-(define (run/core e (needs-labelling #t))
+(define (run/core e)
   (clear-syscall-map!)
   (define start-label (get-label e))
   (eval e init-env init-store (new-graph start-label) (set)))
 
 (define (run/view-graph e)
-  (display-graph (apply merge-graphs* (set->list (smap third (run/core e #f))))))
+  (display-graph (apply merge-graphs* (set->list (smap third (run/core e))))))
 
 (define (run-and-get-graph e (needs-labelling #t))
   (define e′
     (if needs-labelling
         (label-exp e)
         e))
-  (define result (run/core e′ needs-labelling))
+  (define result (run/core e′))
   (define total-graph (apply merge-graphs* (set->list (smap third result))))
   (build-syscall-map total-graph e′)
   (cons (smap car result) total-graph))
@@ -357,7 +357,7 @@
   
 (define (run-algo e (needs-labelling #f))
   (define g (cdr (run-and-get-graph e needs-labelling)))
-  (display-graph g)
+  ;(display-graph g)
   (find-pledges g syscall-map))
 
 (define syscall-set? (set/c symbol?))
@@ -407,6 +407,9 @@
 
 (define/contract (eval-let l x def body ρ s context seen)
   (-> symbol? symbol? any/c any/c env/c store? graph? seen? response?)
+  (display def)
+  (display "\n")
+  (display body)
   (define definitions (eval def ρ s (add-edge context l (get-first-control-label def)) seen))
   (forall definitions
           (pλ (v last-label context′ s0)     
@@ -415,14 +418,21 @@
           
 
 
+;; Each evaluation result is a
+;; list
+;;  0 -> the value produced
+;;  1 -> the last label executed
+;;  2 -> the context graph produced
+;;  3 -> the store produced
 (define/contract (eval-syscall label name es ρ s context seen)
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
-  (define results (eval-begin label es ρ s context seen))
+  (define results  (if (empty? es) es (eval-begin label es ρ s context seen)))
+  (if (empty? es) (set (list 1 label context s)(list 0 label context s))
   (forall results
           (pλ (r last-label context′ s0)
               (define context′′ (add-edge context′ last-label label))
               (set (list 1 label context′′ s0)
-                   (list 0 label context′′ s0)))))
+                   (list 0 label context′′ s0))))))
   
     
 
@@ -522,7 +532,7 @@
 
 (define (syscall-points e)
   (match e
-     [(? label-prim?) (set)]
+    [(? label-prim?) (set)]
     [(? label-variable?) (set)]
     [`(if ,(? label?) ,e0 ,e1 ,e2)
      (apply ∪ (map syscall-points (list e0 e1 e2)))]
@@ -538,8 +548,66 @@
     [(cons 'syscall (cons (? label? l) (cons call-name args)))
      (set-add (apply ∪ (map syscall-points args)) (syscall-point (label->symbol l) call-name))]
     [(list 'app (? label?) (? list? app)) (apply ∪ (map syscall-points app))]))
-    
 
+
+;;looks up what pledge if any corresponds to the given label, else #f
+(define (lookup sys l)
+  (match sys
+    [(cons `(,l1 ,call) rest) (if (equal? l l1) call (lookup rest l))]
+    [_ #f]))
+
+;;looksup label in syscall-map returns false if it doesn't exist
+(define (ref l)
+  (hash-ref syscall-map l (λ () #f)))
+
+;; given two hashsets returns the call that is in only one of them
+(define (get-sub s1 s2)
+  (display "s1\n")
+  (display s1)
+  (display "s2\n")
+  (display s2)
+  (set-first (set-subtract s1 s2)))
+
+;;takes a label expression and a hash-set of syscalls
+;; the current max amount of calls available and current set of available calls and inserts pledge statements when needed
+;; also deletes labels as it goes to compress two passes into one
+(define/contract (pledge-insert e s)
+  (-> label-exp? set? exp?)
+  (match e
+    [`(prim (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                `(begin (pledge ,(get-sub s st)) e0)
+                                                e0))]
+    [`(var (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                `(begin (pledge ,(get-sub s st)) e0)
+                                                e0))]
+    [`(if (label ,l) ,e0 ,e1 ,e2) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                           `(begin (pledge ,(get-sub s st)) (if ,(pledge-insert e0 st) ,(pledge-insert e1 st) ,(pledge-insert e2 st)))
+                                                           `(if ,(pledge-insert e0 s) ,(pledge-insert e1 s) ,(pledge-insert e2 s))))]
+    [`(let (label ,l) ((,x ,def)) ,body) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                           `(begin (pledge ,(get-sub s st))
+                                                                   `(let ((,x ,(pledge-insert def st))) ,(pledge-insert body st)))
+                                                           `(let ((,x ,(pledge-insert def s))) ,(pledge-insert body s))))]
+    [`(λ (label ,l) ,(? list? xs) ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                           `(begin (pledge ,(get-sub s st))
+                                                                   (λ ,xs ,(pledge-insert def st)))
+                                                           `(λ ,xs ,(pledge-insert def s))))]
+    [`(rec (label ,l) ,name ,xs ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                              `(begin (pledge ,(get-sub s st))
+                                                                      (rec ,name ,xs ,(pledge-insert def st)))
+                                                              `(rec ,name ,xs ,(pledge-insert def s))))]
+    [`(begin (label ,l) ,es ...)  (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                              `(begin (pledge ,(get-sub s st))
+                                                                      ,(for/list [(e es)] (pledge-insert e st)))
+                                                              `(begin ,(for/list [(e es)] (pledge-insert e s)))))]
+    [`(syscall (label ,l) ,call ,rst ...) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                `(begin (pledge ,(get-sub s st))
+                                                        ,(cons 'syscall (cons call (for/list [(e rst)] (pledge-insert e st)))))
+                                                (cons 'syscall (cons call (for/list [(e rst)] (pledge-insert e s))))))]
+    [`(app (label ,l) ,es ...) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
+                                                `(begin (pledge ,(get-sub s st))
+                                                        ,(for/list [(e es)] (pledge-insert e st)))
+                                                (for/list [(e es)] (pledge-insert e s))))]))
+  
 (define (type-error loc t v)
   (error (format "~a: Type Error! Expected: ~a, Got: ~a" loc t (typeof v))))
 

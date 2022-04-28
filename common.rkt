@@ -39,6 +39,7 @@
     λ?
     rec?
     begin?
+    pledge?
     syscall?
     (listof exp?)) e))
 
@@ -64,6 +65,7 @@
     label-rec?
     label-begin?
     label-syscall?
+    pledge?
     (list/c app? label? (listof exp?))) e))
 
 (define/pred label-prim? (list 'prim (? label?) (? prim?)))
@@ -95,6 +97,7 @@
 (define/pred rec? (list 'rec (? symbol?) (? (listof symbol?)) (? exp?)))
 (define/pred begin? (cons 'begin (? (listof exp?))))
 (define/pred syscall? (cons 'syscall (cons (? symbol?) (? (listof exp?)))))
+(define/pred pledge? (list 'pledge (? symbol?)))
 
 (define/pred label-if? (list 'if (? label?) (? label-exp?) (? label-exp?) (? label-exp?)))
 
