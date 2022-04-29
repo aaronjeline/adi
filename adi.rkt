@@ -345,11 +345,8 @@
   
 (define (run-algo e (needs-labelling #f))
   (define g (cdr (run-and-get-graph e needs-labelling)))
-  ;(display-graph g)
-  (find-pledges g syscall-map))
-
-(define syscall-set? (set/c symbol?))
-
+  ;(display-graph g))
+ '())
 
 
 
@@ -574,10 +571,10 @@
     [`(if (label ,l) ,e0 ,e1 ,e2) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                           (match-let ([(cons (list es0 es1) st1) (pledges-insert (list e0 e1) st)]
                                                                       [(cons (list es0 es2) st2) (pledges-insert (list e0 e2) st)])
-                                                            (cons `(begin (pledge ,(get-sub s st)) (if ,es0 ,es1 ,es2)) (set-union st1 st2)))
+                                                            (cons `(begin (pledge ,(get-sub s st)) (if ,es0 ,es1 ,es2)) (∪ st1 st2)))
                                                           (match-let ([(cons (list es0 es1) s1) (pledges-insert (list e0 e1) s)]
                                                                       [(cons (list es0 es2) s2) (pledges-insert (list e0 e2) s)])
-                                                           (cons `(if ,es0 ,es1 ,es2) (set-union s1 s2)))))]
+                                                           (cons `(if ,es0 ,es1 ,es2) (∪ s1 s2)))))]
     [`(let (label ,l) ((,x ,def)) ,body) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                                  (match-let
                                                                      ([(cons (list def0 bod) st1) (pledges-insert (list def body) st)])
@@ -651,9 +648,3 @@
 (define (self-evaluating? e)
   (or (number? e) (boolean? e) (eq? 'empty e)))
 
-(define variable? symbol?)
-
-
-
-(define (zip a b)
-  (map list a b))

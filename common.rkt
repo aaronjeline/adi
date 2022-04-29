@@ -1,5 +1,5 @@
 #lang racket
-(provide list-ref/set exp? variable? label-exp? label? define/pred prim? label-prim? label-variable? ∪)
+(provide list-ref/set exp? variable? label-exp? label? define/pred prim? label-prim? label-variable? ∪ zip)
 
 
 (define-syntax (define/pred stx)
@@ -11,7 +11,11 @@
              [body #t]
              [_ #f])))]))
 
-;; set union for more than two sets
+;; zips two lists together
+(define (zip a b)
+  (map list a b))
+
+;; set union but allows empty arguments
 (define (∪ . xs)
   (if (empty? xs)
       (set)

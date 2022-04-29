@@ -1,5 +1,5 @@
 #lang racket
-(require racket/trace)
+(require racket/trace "common.rkt")
 (define-syntax-rule (letp (x y) d b)
   (match d
     [(cons x y) b]
@@ -308,9 +308,6 @@
 
 (define variable? symbol?)
 
-(define ∪ set-union)
 
-(define (zip a b)
-  (map list a b))
 
 

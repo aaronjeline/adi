@@ -2,6 +2,11 @@
 (require "graph.rkt" "common.rkt")
 (provide find-pledges)
 
+;;THIS WHOLE FILE IS A LITTLE USELESS
+;;THIS FUNCTION ONLY RETURNS THE LABELS THAT HAVE SYSCALLS
+;;THE INSERT-PLEDGE DOES NOT RELY ON IT
+;;UNWILLING TO DELETE YET BUT CONSIDER IT
+
 (define (find-pledges g syscall-map)
   (find-pledges-step (graph-starting-edge g) g syscall-map (set)))
 
