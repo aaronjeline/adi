@@ -63,14 +63,20 @@
 (check-true (has-edge? syscall-graph 'g499252 'g499253))
 (check-true (has-edge? syscall-graph 'g499253 'g499251))
 
+(define syscall-nest-noargs '(app (label g36342) ((var (label g36343) =) (prim (label g36344) 0) (syscall (label g36345) fork))))
+(define syscall-nest-noargs-graph (cdr (run-and-get-graph syscall-nest-noargs #f)))
+
+
 (define syscall-nest '(app (label g514150)
                            ((var (label g514151) =)
                             (prim (label g514152) 0)
                             (syscall (label g514153) read (prim (label g514154) 1)
                                      (prim (label g514155) 2)))))
+
 (define syscall-nest-graph (cdr (run-and-get-graph syscall-nest #f)))
 (check-true (has-edge? syscall-nest-graph 'g514150 'g514151))
 (check-true (has-edge? syscall-nest-graph 'g514151 'g514152))
 (check-true (has-edge? syscall-nest-graph 'g514152 'g514154))
 (check-true (has-edge? syscall-nest-graph 'g514154 'g514155))
 (check-true (has-edge? syscall-nest-graph 'g514155 'g514153))
+(check-false (has-edge? syscall-nest-graph 'g514153 'g514154))

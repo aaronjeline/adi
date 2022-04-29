@@ -407,13 +407,14 @@
 ;;  3 -> the store produced
 (define/contract (eval-syscall label name es ρ s context seen)
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
-  (define results  (if (empty? es) es (eval-begin label es ρ s context seen)))
-  (if (empty? es) (set (list 1 label context s)(list 0 label context s))
-      (forall results
+  (if (empty? es)
+      (set (list 1 label context s) (list 0 label context s))
+      (forall (eval-begin label es ρ s context seen)
               (pλ (r last-label context′ s0)
                   (define context′′ (add-edge context′ last-label label))
                   (set (list 1 label context′′ s0)
                        (list 0 label context′′ s0))))))
+  
   
     
 
@@ -434,11 +435,12 @@
 ;; Pass to apply-f to perform the application
 (define/contract (eval-app app ρ l s context seen)
   (-> list? env/c label? store? graph? seen? response?)
-  (forall (eval-list-of-exprs (label->symbol l) app ρ s context seen)
-          (pλ (vs last-label context′ s0)
+  (define context′ (add-edge context (label->symbol l) (get-first-control-label (first app))))
+  (forall (eval-list-of-exprs (label->symbol l) app ρ s context′ seen)
+          (pλ (vs last-label context′′ s0)
               (match vs
                 [(cons fv argsv)
-                 (apply-f (label->symbol l) fv argsv last-label s0 context′ seen)]
+                 (apply-f (label->symbol l) fv argsv last-label s0 context′′ seen)]
                 ['() (error "Empty Application")]))))
          
 
@@ -471,12 +473,14 @@
   (match es
     ['() (set (list '() l context s))]
     [(cons e es)
-     (define results (eval e ρ s (add-edge context l (get-label e)) seen))
+     (define results (eval e ρ s context seen))
      (forall results
              (pλ (v last-label context′ s0)
-                 (forall (eval-list-of-exprs last-label es ρ s0 context′ seen)
-                         (pλ (vs last-label context′′ s1)
-                             (set (list (cons v vs) last-label context′′ s1))))))]))
+                 (define context′′ (if (empty? es) context′
+                                       (add-edge context′ last-label (get-first-control-label (first es)))))
+                 (forall (eval-list-of-exprs last-label es ρ s0 context′′ seen)
+                         (pλ (vs last-label context′′′ s1)
+                             (set (list (cons v vs) last-label context′′′ s1))))))]))
 
 
 

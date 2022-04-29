@@ -63,13 +63,13 @@
 (define (has-edge? g v1 v2)
   (match g
     [(graph s forward backward)
-     (set-member? (hash-ref forward v1) v2)]))
+     (set-member? (hash-ref forward v1 (set)) v2)]))
   
- ;; Is there a forward edge between v1 & v2
+ ;; Is there a backwards edge between v1 & v2
 (define (has-edge/back? g v1 v2)
   (match g
     [(graph s forward backward)
-     (set-member? (hash-ref backward v1) v2)]))
+     (set-member? (hash-ref backward v1 (set)) v2)]))
       
 
   

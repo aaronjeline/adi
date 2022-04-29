@@ -56,7 +56,7 @@
     [`(prim (label ,l) ,_) l]
     [`(var (label ,l) ,_) l]
     [`(if (label ,l) ,e1 ,_ ,_) l]
-    [`(let (label ,l) ((,x ,e)) ,_) (get-first-control-label e)]
+    [`(let (label ,l) ((,x ,e)) ,_) l]
     [`(λ (label ,l) ,_ ,_) l]
     [`(rec (label ,l) ,_ ,_ ,_) l]
     [(cons 'begin (cons `(label ,l) _)) l]
