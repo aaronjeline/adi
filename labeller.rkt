@@ -55,7 +55,7 @@
   (match e
     [`(prim (label ,l) ,_) l]
     [`(var (label ,l) ,_) l]
-    [`(if (label ,l) ,e1 ,_ ,_) (get-first-control-label e1)]
+    [`(if (label ,l) ,e1 ,_ ,_) l]
     [`(let (label ,l) ((,x ,e)) ,_) (get-first-control-label e)]
     [`(λ (label ,l) ,_ ,_) l]
     [`(rec (label ,l) ,_ ,_ ,_) l]
@@ -64,9 +64,7 @@
      (if (empty? args) l
      (get-first-control-label (first args)))]
     [`(app (label ,l) ,app-list)
-     (match app-list
-       ['() (error "Empty Application")]
-       [(cons function-exp _) (get-first-control-label function-exp)])]))
+     l]))
 
 
 

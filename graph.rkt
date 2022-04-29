@@ -1,7 +1,7 @@
 #lang racket
 (require "common.rkt")
 (provide neighbors get-backwards-slice display-graph new-graph add-edge (struct-out graph)
-         merge-graphs*)
+         merge-graphs* has-edge? has-edge/back?)
 ;; Right now we are storing both fowrads & backwards edges
 ;; Forward edges can probably be removed.
 
@@ -58,8 +58,19 @@
     (match entry
       [(cons k v)
        (hash-set-union! h k v)])))
+
+;; Is there a forward edge between v1 & v2
+(define (has-edge? g v1 v2)
+  (match g
+    [(graph s forward backward)
+     (set-member? (hash-ref forward v1) v2)]))
   
-     
+ ;; Is there a forward edge between v1 & v2
+(define (has-edge/back? g v1 v2)
+  (match g
+    [(graph s forward backward)
+     (set-member? (hash-ref backward v1) v2)]))
+      
 
   
 

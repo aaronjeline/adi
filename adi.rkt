@@ -346,7 +346,7 @@
 (define (run-algo e (needs-labelling #f))
   (define g (cdr (run-and-get-graph e needs-labelling)))
   ;(display-graph g))
- '())
+  '())
 
 
 
@@ -381,20 +381,16 @@
 
 (define/contract (eval-if l e0 e1 e2 ρ s context seen)
   (-> symbol? label-exp? label-exp? label-exp? env? store? graph? seen? response?)
-  (define guards (eval e0 ρ s context seen))
+  (define guards (eval e0 ρ s (add-edge context l (get-first-control-label e0)) seen))
   (forall guards (pλ (v last-label context′ s0)
-                     (define context′′ (add-edge context′ last-label l))
                      (if v
-                         (eval e1 ρ s0 (add-edge context′′ l (get-first-control-label e1)) seen)
-                         (eval e2 ρ s0 (add-edge context′′ l (get-first-control-label e2)) seen)))))
+                         (eval e1 ρ s0 (add-edge context′ last-label (get-first-control-label e1)) seen)
+                         (eval e2 ρ s0 (add-edge context′ last-label (get-first-control-label e2)) seen)))))
                     
                      
 
 (define/contract (eval-let l x def body ρ s context seen)
   (-> symbol? symbol? any/c any/c env/c store? graph? seen? response?)
-  (display def)
-  (display "\n")
-  (display body)
   (define definitions (eval def ρ s (add-edge context l (get-first-control-label def)) seen))
   (forall definitions
           (pλ (v last-label context′ s0)     
@@ -413,11 +409,11 @@
   (-> symbol? symbol? (listof label-exp?) env/c store? graph? seen? response?)
   (define results  (if (empty? es) es (eval-begin label es ρ s context seen)))
   (if (empty? es) (set (list 1 label context s)(list 0 label context s))
-  (forall results
-          (pλ (r last-label context′ s0)
-              (define context′′ (add-edge context′ last-label label))
-              (set (list 1 label context′′ s0)
-                   (list 0 label context′′ s0))))))
+      (forall results
+              (pλ (r last-label context′ s0)
+                  (define context′′ (add-edge context′ last-label label))
+                  (set (list 1 label context′′ s0)
+                       (list 0 label context′′ s0))))))
   
     
 
@@ -470,8 +466,8 @@
 
 ;; (list expr) ρ store seen -> (set (list exp))
 (define (eval-list-of-exprs l es ρ s context seen)
-;  (-> symbol? (listof label-exp?) env/c store? graph? seen?
- ;     (set/c (list/c list? symbol? graph? store?)))
+  ;  (-> symbol? (listof label-exp?) env/c store? graph? seen?
+  ;     (set/c (list/c list? symbol? graph? store?)))
   (match es
     ['() (set (list '() l context s))]
     [(cons e es)
@@ -563,32 +559,32 @@
   (-> label-exp? set? (cons/c exp? set?))
   (match e
     [`(prim (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                (cons `(begin (pledge ,(get-sub s st)) e0) st)
-                                                (cons e0 s)))]
+                                                    (cons `(begin (pledge ,(get-sub s st)) e0) st)
+                                                    (cons e0 s)))]
     [`(var (label ,l) ,e0) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                (cons `(begin (pledge ,(get-sub s st)) e0) st)
-                                                (cons e0 s)))]
+                                                   (cons `(begin (pledge ,(get-sub s st)) e0) st)
+                                                   (cons e0 s)))]
     [`(if (label ,l) ,e0 ,e1 ,e2) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                           (match-let ([(cons (list es0 es1) st1) (pledges-insert (list e0 e1) st)]
                                                                       [(cons (list es0 es2) st2) (pledges-insert (list e0 e2) st)])
                                                             (cons `(begin (pledge ,(get-sub s st)) (if ,es0 ,es1 ,es2)) (∪ st1 st2)))
                                                           (match-let ([(cons (list es0 es1) s1) (pledges-insert (list e0 e1) s)]
                                                                       [(cons (list es0 es2) s2) (pledges-insert (list e0 e2) s)])
-                                                           (cons `(if ,es0 ,es1 ,es2) (∪ s1 s2)))))]
+                                                            (cons `(if ,es0 ,es1 ,es2) (∪ s1 s2)))))]
     [`(let (label ,l) ((,x ,def)) ,body) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                                  (match-let
                                                                      ([(cons (list def0 bod) st1) (pledges-insert (list def body) st)])
-                                                           (cons `(begin (pledge ,(get-sub s st))
-                                                                   `(let ((,x ,def0)) ,bod)) st1))
-                                                           (match-let
+                                                                   (cons `(begin (pledge ,(get-sub s st))
+                                                                                 `(let ((,x ,def0)) ,bod)) st1))
+                                                                 (match-let
                                                                      ([(cons (list def0 bod) s1) (pledges-insert (list def body) s)])
-                                                           (cons `(let ((,x ,def0)) ,bod) s1))))]
+                                                                   (cons `(let ((,x ,def0)) ,bod) s1))))]
     [`(λ (label ,l) ,(? list? xs) ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
-                                                           (match-let ([(cons def0 st0) (pledge-insert def st)])
-                                                             (cons `(begin (pledge ,(get-sub s st))
-                                                                   (λ ,xs ,def0)) st0))
-                                                           (match-let ([(cons def0 s0) (pledge-insert def s)])
-                                                           (cons `(λ ,xs ,def0) s0))))] 
+                                                                (match-let ([(cons def0 st0) (pledge-insert def st)])
+                                                                  (cons `(begin (pledge ,(get-sub s st))
+                                                                                (λ ,xs ,def0)) st0))
+                                                                (match-let ([(cons def0 s0) (pledge-insert def s)])
+                                                                  (cons `(λ ,xs ,def0) s0))))] 
     [`(rec (label ,l) ,name ,xs ,def) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                               (match-let ([(cons def0 st0) (pledge-insert def st)])
                                                                 (cons  `(begin (pledge ,(get-sub s st))
@@ -602,18 +598,18 @@
                                                             (cons (cons 'begin es0) s0))))]
     [`(syscall (label ,l) ,call ,rst ...) (let ((st (ref l))) (if (and st (< (set-count st) (set-count s)))
                                                                   (match-let ([(cons es0 st0) (pledges-insert rst st)])
-                                                (cons `(begin (pledge ,(get-sub s st))
-                                                        ,(cons 'syscall (cons call es0))) st0))
+                                                                    (cons `(begin (pledge ,(get-sub s st))
+                                                                                  ,(cons 'syscall (cons call es0))) st0))
                                                                   
-                                                (match-let ([(cons es0 s0) (pledges-insert rst s)])
-                                                (cons (cons 'syscall (cons call es0)) s0))))]
+                                                                  (match-let ([(cons es0 s0) (pledges-insert rst s)])
+                                                                    (cons (cons 'syscall (cons call es0)) s0))))]
     [`(app (label ,l) ,es) (let ((st (ref l))) (displayln es) (if (and st (< (set-count st) (set-count s))) 
-                                                       (match-let ([(cons es0 st0) (pledges-insert es st)])
-                                                         (cons 
-                                                `(begin (pledge ,(get-sub s st))
-                                                        ,es0) st0))
-                                                       (match-let ([(cons es0 s0) (pledges-insert es s)])
-                                                         (cons es0 s0))))]))
+                                                                  (match-let ([(cons es0 st0) (pledges-insert es st)])
+                                                                    (cons 
+                                                                     `(begin (pledge ,(get-sub s st))
+                                                                             ,es0) st0))
+                                                                  (match-let ([(cons es0 s0) (pledges-insert es s)])
+                                                                    (cons es0 s0))))]))
 
 (module+ test
   (require rackunit)
