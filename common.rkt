@@ -46,12 +46,16 @@
     pledge?
     syscall?
     (listof exp?)) e))
+;; need to add
+;; apply lamrest lamcase
 
 (define (prim? e)
   (match e
     [(? number?) #t]
     [(? boolean?) #t]
     [(? empty-symb?) #t]
+    [(? char?) #t]
+    [(? string?) #t]
     [_ #f]))
 
 (define (variable? x)

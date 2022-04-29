@@ -89,7 +89,7 @@
 
 ;;given a label prim expression unwraps it to it's primitive value
 (define/contract (get-prim e)
-  (-> label-prim? (or/c boolean? number? symbol?))
+  (-> label-prim? (or/c boolean? number? symbol? string? char?))
   (match e
     [`(prim ,_ ,p) p]))
 
