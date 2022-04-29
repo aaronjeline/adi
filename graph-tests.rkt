@@ -80,3 +80,16 @@
 (check-true (has-edge? syscall-nest-graph 'g514154 'g514155))
 (check-true (has-edge? syscall-nest-graph 'g514155 'g514153))
 (check-false (has-edge? syscall-nest-graph 'g514153 'g514154))
+
+
+(define ex '(let [(f (λ (x) (syscall fork)))]
+              (if (f 1) #t #f)))
+(define ex-label
+  '(let (label g417216)
+     ((f (λ (label g417217) (x) (syscall (label g417218) fork))))
+     (if (label g417219)
+         (app (label g417220) ((var (label g417221) f) (prim (label g417222) 1)))
+         (prim (label g417223) #t) (prim (label g417224) #f))))
+(define g (cdr (run-and-get-graph ex-label #f)))
+
+

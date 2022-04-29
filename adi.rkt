@@ -460,10 +460,11 @@
 
 (define/contract (eval-begin l es ρ s context seen)
   (-> symbol? list? env/c store? graph? seen? response?)
+  (define context′ (add-edge context l (get-first-control-label (first es))))
   (forall
-   (eval-list-of-exprs l es ρ s context seen)
-   (pλ (vs last-label context′ s0)
-       (set (list (last vs) last-label context′ s0)))))
+   (eval-list-of-exprs l es ρ s context′ seen)
+   (pλ (vs last-label context′′ s0)
+       (set (list (last vs) last-label context′′ s0)))))
           
 
 ;; (list expr) ρ store seen -> (set (list exp))
@@ -614,6 +615,8 @@
                                                                              ,es0) st0))
                                                                   (match-let ([(cons es0 s0) (pledges-insert es s)])
                                                                     (cons es0 s0))))]))
+
+(define test (label-exp '(begin (syscall fork) (syscall displayln 5) (syscall exec) (syscall displayln 6))))
 
 (module+ test
   (require rackunit)
