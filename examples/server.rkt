@@ -7,12 +7,6 @@
 
 (bind-and-listen servSock port)
 
-(define (loop)
-  (let [(client (accept servSock))]
-    (begin
-      (handle-client client)
-      (loop))))
-
 (define (handle-client client)
   (let [(v (vector 0 0 0 0 0))]
     (begin
@@ -21,5 +15,11 @@
       (displayln (vector->string v))
       (write-bytes client v)
       (close client))))
+      
+(define (loop)
+  (let [(client (accept servSock))]
+    (begin
+      (handle-client client)
+      (loop))))
 
 (loop)
